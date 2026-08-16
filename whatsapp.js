@@ -63,6 +63,11 @@ export async function sendWhatsAppMessage(toPhone, messageText) {
       return null;
     }
 
+    console.log(
+      '📨 Full Meta API response:',
+      JSON.stringify(data, null, 2)
+    );
+
     const messageId =
       data.messages?.[0]?.id;
 
