@@ -1,279 +1,88 @@
-import express from 'express';
 import dotenv from 'dotenv';
-import { sendWhatsAppMessage } from './whatsapp.js';
-import { extractLeadInfo } from './extract.js';
 
 dotenv.config();
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
+const META_PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
 
-app.use(express.json());
-
-/**
- * ================================
- * HEALTH CHECK
- * ================================
- */
-app.get('/', (req, res) => {
-  res
-    .status(200)
-    .send('WhatsApp Lead Automation Backend is active and running.');
-});
+const META_GRAPH_VERSION =
+  process.env.META_GRAPH_VERSION || 'v19.0';
 
 /**
- * ================================
- * META WEBHOOK VERIFICATION
- * ================================
+ * Sends a text message through the WhatsApp Cloud API.
  */
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+export async function sendWhatsAppMessage(toPhone, messageText) {
 
-  if (
-    mode === 'subscribe' &&
-    token === 'speedlead123verify'
-  ) {
-    console.log('✅ Webhook verified successfully by Meta.');
+  if (!META_ACCESS_TOKEN || !META_PHONE_NUMBER_ID) {
+    console.error(
+      '❌ WhatsApp Configuration Error: META_ACCESS_TOKEN or META_PHONE_NUMBER_ID is missing.'
+    );
 
-    return res
-      .type('text/plain')
-      .status(200)
-      .send(challenge);
+    return null;
   }
 
-  console.warn('❌ Webhook verification failed.');
+  const url =
+    `https://graph.facebook.com/${META_GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`;
 
-  return res.sendStatus(403);
-});
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: toPhone,
+    type: 'text',
+    text: {
+      preview_url: false,
+      body: messageText
+    }
+  };
 
-/**
- * ================================
- * WHATSAPP WEBHOOK
- * ================================
- */
-app.post('/webhook', (req, res) => {
-
-  // IMPORTANT:
-  // Tell Meta immediately that we received the webhook.
-  res.status(200).send('EVENT_RECEIVED');
-
-  // Process the message after acknowledging Meta.
-  processWhatsAppMessage(req.body).catch((error) => {
-    console.error(
-      '❌ Error processing WhatsApp message:',
-      error
-    );
-  });
-});
-
-/**
- * ================================
- * PROCESS WHATSAPP MESSAGE
- * ================================
- */
-async function processWhatsAppMessage(body) {
   try {
 
-    const entry = body.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const message = value?.messages?.[0];
+    console.log(`📤 Sending WhatsApp message to ${toPhone}...`);
 
-    // Ignore webhook events that aren't messages.
-    if (!message) {
-      console.log('ℹ️ Webhook received without a customer message.');
-      return;
-    }
+    const response = await fetch(url, {
+      method: 'POST',
 
-    // Currently we only process text messages.
-    if (message.type !== 'text') {
-      console.log(
-        `ℹ️ Ignoring unsupported message type: ${message.type}`
-      );
-      return;
-    }
+      headers: {
+        Authorization: `Bearer ${META_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
 
-    const fromPhone = message.from;
+      body: JSON.stringify(payload)
+    });
 
-    const senderName =
-      value.contacts?.[0]?.profile?.name ||
-      'Unknown Contact';
+    const data = await response.json();
 
-    const messageBody =
-      message.text?.body?.trim();
+    if (!response.ok) {
 
-    if (!messageBody) {
-      console.log('⚠️ Received an empty text message.');
-      return;
-    }
-
-    /**
-     * ================================
-     * LOG INCOMING MESSAGE
-     * ================================
-     */
-
-    console.log('\n====================================');
-    console.log('📥 INCOMING WHATSAPP MESSAGE');
-    console.log('====================================');
-    console.log(`From Name : ${senderName}`);
-    console.log(`From Phone: ${fromPhone}`);
-    console.log(`Message   : "${messageBody}"`);
-    console.log('====================================\n');
-
-    /**
-     * ================================
-     * AI LEAD EXTRACTION
-     * ================================
-     */
-
-    console.log('🧠 Sending message to OpenAI...');
-
-    const leadInfo = await extractLeadInfo(
-      messageBody,
-      'NEW'
-    );
-
-    console.log('\n====================================');
-    console.log('🤖 AI LEAD EXTRACTION');
-    console.log('====================================');
-    console.log(
-      JSON.stringify(leadInfo, null, 2)
-    );
-    console.log('====================================\n');
-
-    /**
-     * ================================
-     * GENERATE BASIC TEST RESPONSE
-     * ================================
-     *
-     * This is intentionally simple.
-     * We are first proving that:
-     *
-     * WhatsApp
-     * → Meta
-     * → Render
-     * → OpenAI
-     * → Meta
-     * → WhatsApp
-     *
-     * works correctly.
-     *
-     * We can build the real qualification
-     * conversation logic after this works.
-     */
-
-    let replyMessage;
-
-    if (leadInfo.needs_clarification) {
-
-      replyMessage =
-        `Hi ${senderName}! 👋 Thanks for reaching out. ` +
-        `I'd be happy to help you find the right property. ` +
-        `Could you tell me what type of property you're looking for and your approximate budget?`;
-
-    } else {
-
-      replyMessage =
-        `Hi ${senderName}! 👋 Thanks for your interest. ` +
-        `I've received your requirement for ` +
-        `${leadInfo.property_type || 'a property'} ` +
-        `and we'll help you with the next steps.`;
-    }
-
-    /**
-     * ================================
-     * SEND WHATSAPP REPLY
-     * ================================
-     */
-
-    console.log(
-      `📤 Sending reply to ${fromPhone}...`
-    );
-
-    const sendResult =
-      await sendWhatsAppMessage(
-        fromPhone,
-        replyMessage
-      );
-
-    if (sendResult) {
-
-      console.log(
-        '✅ Customer reply sent successfully.'
-      );
-
-    } else {
+      console.error('❌ Meta WhatsApp API error:');
 
       console.error(
-        '❌ Customer reply could not be sent.'
+        JSON.stringify(data, null, 2)
       );
+
+      return null;
     }
+
+    const messageId =
+      data.messages?.[0]?.id;
+
+    console.log(
+      '✅ WhatsApp message successfully sent!'
+    );
+
+    console.log(
+      `Message ID: ${messageId}`
+    );
+
+    return data;
 
   } catch (error) {
 
     console.error(
-      '❌ Error inside processWhatsAppMessage:',
+      '❌ Network error attempting to send WhatsApp message:',
       error
     );
+
+    return null;
   }
 }
-
-/**
- * ================================
- * GLOBAL ERROR HANDLERS
- * ================================
- */
-
-process.on('uncaughtException', (err) => {
-  console.error(
-    '⚠️ Uncaught Exception:',
-    err
-  );
-});
-
-process.on('unhandledRejection', (reason) => {
-  console.error(
-    '⚠️ Unhandled Rejection:',
-    reason
-  );
-});
-
-/**
- * ================================
- * START SERVER
- * ================================
- */
-
-const server = app.listen(PORT, () => {
-
-  console.log(
-    `🚀 Server listening on port ${PORT}`
-  );
-
-  console.log(
-    `👉 Webhook endpoint: http://localhost:${PORT}/webhook`
-  );
-
-});
-
-server.on('error', (err) => {
-
-  if (err.code === 'EADDRINUSE') {
-
-    console.error(
-      `❌ Port ${PORT} in use. Change PORT or kill process.`
-    );
-
-  } else {
-
-    console.error(
-      '❌ Server error:',
-      err
-    );
-
-  }
-
-});
