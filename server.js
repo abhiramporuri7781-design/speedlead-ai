@@ -56,13 +56,13 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', (req, res) => {
 
   // IMPORTANT:
-  // Tell Meta immediately that we received the webhook.
+  // Respond to Meta immediately.
   res.status(200).send('EVENT_RECEIVED');
 
-  // Process the message after acknowledging Meta.
-  processWhatsAppMessage(req.body).catch((error) => {
+  // Process the webhook asynchronously.
+  processWhatsAppWebhook(req.body).catch((error) => {
     console.error(
-      '❌ Error processing WhatsApp message:',
+      '❌ Error processing WhatsApp webhook:',
       error
     );
   });
@@ -70,28 +70,100 @@ app.post('/webhook', (req, res) => {
 
 /**
  * ================================
- * PROCESS WHATSAPP MESSAGE
+ * PROCESS WHATSAPP WEBHOOK
  * ================================
  */
-async function processWhatsAppMessage(body) {
+async function processWhatsAppWebhook(body) {
   try {
 
     const entry = body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-    const message = value?.messages?.[0];
 
-    // Ignore webhook events that aren't messages.
-    if (!message) {
-      console.log('ℹ️ Webhook received without a customer message.');
+    if (!value) {
+      console.log('⚠️ Webhook received without value.');
       return;
     }
 
-    // Currently we only process text messages.
+    /**
+     * ==========================================
+     * 1. WHATSAPP MESSAGE DELIVERY STATUS
+     * ==========================================
+     *
+     * Meta sends these events after we send
+     * a WhatsApp message.
+     *
+     * Possible statuses:
+     *
+     * sent
+     * delivered
+     * read
+     * failed
+     */
+
+    const status = value.statuses?.[0];
+
+    if (status) {
+
+      console.log('\n====================================');
+      console.log('📊 WHATSAPP MESSAGE STATUS');
+      console.log('====================================');
+
+      console.log(`Message ID : ${status.id}`);
+      console.log(`Status     : ${status.status}`);
+      console.log(`Recipient  : ${status.recipient_id}`);
+
+      /**
+       * If Meta reports an error, print the
+       * complete error information.
+       */
+      if (status.errors) {
+
+        console.error(
+          '❌ WhatsApp delivery error:'
+        );
+
+        console.error(
+          JSON.stringify(
+            status.errors,
+            null,
+            2
+          )
+        );
+      }
+
+      console.log('====================================\n');
+
+      return;
+    }
+
+    /**
+     * ==========================================
+     * 2. INCOMING CUSTOMER MESSAGE
+     * ==========================================
+     */
+
+    const message = value.messages?.[0];
+
+    // Ignore events that don't contain a message.
+    if (!message) {
+
+      console.log(
+        'ℹ️ Webhook received without a customer message or status.'
+      );
+
+      return;
+    }
+
+    /**
+     * Currently process text messages only.
+     */
     if (message.type !== 'text') {
+
       console.log(
         `ℹ️ Ignoring unsupported message type: ${message.type}`
       );
+
       return;
     }
 
@@ -105,64 +177,72 @@ async function processWhatsAppMessage(body) {
       message.text?.body?.trim();
 
     if (!messageBody) {
-      console.log('⚠️ Received an empty text message.');
+
+      console.log(
+        '⚠️ Received an empty text message.'
+      );
+
       return;
     }
 
     /**
-     * ================================
+     * ==========================================
      * LOG INCOMING MESSAGE
-     * ================================
+     * ==========================================
      */
 
     console.log('\n====================================');
     console.log('📥 INCOMING WHATSAPP MESSAGE');
     console.log('====================================');
-    console.log(`From Name : ${senderName}`);
-    console.log(`From Phone: ${fromPhone}`);
-    console.log(`Message   : "${messageBody}"`);
+
+    console.log(
+      `From Name : ${senderName}`
+    );
+
+    console.log(
+      `From Phone: ${fromPhone}`
+    );
+
+    console.log(
+      `Message   : "${messageBody}"`
+    );
+
     console.log('====================================\n');
 
     /**
-     * ================================
+     * ==========================================
      * AI LEAD EXTRACTION
-     * ================================
+     * ==========================================
      */
 
-    console.log('🧠 Sending message to OpenAI...');
-
-    const leadInfo = await extractLeadInfo(
-      messageBody,
-      'NEW'
+    console.log(
+      '🧠 Sending message to OpenAI...'
     );
+
+    const leadInfo =
+      await extractLeadInfo(
+        messageBody,
+        'NEW'
+      );
 
     console.log('\n====================================');
     console.log('🤖 AI LEAD EXTRACTION');
     console.log('====================================');
+
     console.log(
-      JSON.stringify(leadInfo, null, 2)
+      JSON.stringify(
+        leadInfo,
+        null,
+        2
+      )
     );
+
     console.log('====================================\n');
 
     /**
-     * ================================
-     * GENERATE BASIC TEST RESPONSE
-     * ================================
-     *
-     * This is intentionally simple.
-     * We are first proving that:
-     *
-     * WhatsApp
-     * → Meta
-     * → Render
-     * → OpenAI
-     * → Meta
-     * → WhatsApp
-     *
-     * works correctly.
-     *
-     * We can build the real qualification
-     * conversation logic after this works.
+     * ==========================================
+     * GENERATE TEST RESPONSE
+     * ==========================================
      */
 
     let replyMessage;
@@ -184,9 +264,9 @@ async function processWhatsAppMessage(body) {
     }
 
     /**
-     * ================================
+     * ==========================================
      * SEND WHATSAPP REPLY
-     * ================================
+     * ==========================================
      */
 
     console.log(
@@ -199,10 +279,20 @@ async function processWhatsAppMessage(body) {
         replyMessage
       );
 
+    /**
+     * ==========================================
+     * CHECK API RESULT
+     * ==========================================
+     */
+
     if (sendResult) {
 
       console.log(
-        '✅ Customer reply sent successfully.'
+        '✅ Customer reply accepted by Meta.'
+      );
+
+      console.log(
+        '⏳ Waiting for WhatsApp delivery status...'
       );
 
     } else {
@@ -215,7 +305,7 @@ async function processWhatsAppMessage(body) {
   } catch (error) {
 
     console.error(
-      '❌ Error inside processWhatsAppMessage:',
+      '❌ Error inside processWhatsAppWebhook:',
       error
     );
   }
@@ -228,17 +318,21 @@ async function processWhatsAppMessage(body) {
  */
 
 process.on('uncaughtException', (err) => {
+
   console.error(
     '⚠️ Uncaught Exception:',
     err
   );
+
 });
 
 process.on('unhandledRejection', (reason) => {
+
   console.error(
     '⚠️ Unhandled Rejection:',
     reason
   );
+
 });
 
 /**
@@ -247,17 +341,26 @@ process.on('unhandledRejection', (reason) => {
  * ================================
  */
 
-const server = app.listen(PORT, () => {
+const server = app.listen(
+  PORT,
+  () => {
 
-  console.log(
-    `🚀 Server listening on port ${PORT}`
-  );
+    console.log(
+      `🚀 Server listening on port ${PORT}`
+    );
 
-  console.log(
-    `👉 Webhook endpoint: http://localhost:${PORT}/webhook`
-  );
+    console.log(
+      `👉 Webhook endpoint: http://localhost:${PORT}/webhook`
+    );
 
-});
+  }
+);
+
+/**
+ * ================================
+ * SERVER ERROR HANDLER
+ * ================================
+ */
 
 server.on('error', (err) => {
 
