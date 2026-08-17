@@ -63,7 +63,7 @@ app.post('/webhook', (req, res) => {
   // Respond to Meta immediately.
   res.status(200).send('EVENT_RECEIVED');
 
-  // Process webhook asynchronously.
+  // Process asynchronously.
   processWhatsAppWebhook(req.body).catch((error) => {
     console.error(
       '❌ Error processing WhatsApp webhook:',
@@ -74,11 +74,17 @@ app.post('/webhook', (req, res) => {
 
 /**
  * ================================
- * HELPER FUNCTIONS
+ * MESSAGE DEDUPLICATION
  * ================================
  */
 
 export const processedMessageIds = new Set();
+
+/**
+ * ================================
+ * FORMAT BUDGET
+ * ================================
+ */
 
 function formatBudget(budgetVal) {
   const num = Number(budgetVal);
@@ -88,15 +94,25 @@ function formatBudget(budgetVal) {
   }
 
   if (num >= 10000000) {
-    return `${(num / 10000000).toFixed(1).replace('.0', '')} Cr`;
+    return `${(num / 10000000)
+      .toFixed(1)
+      .replace('.0', '')} Cr`;
   }
 
   if (num >= 100000) {
-    return `${(num / 100000).toFixed(1).replace('.0', '')} Lakhs`;
+    return `${(num / 100000)
+      .toFixed(1)
+      .replace('.0', '')} Lakhs`;
   }
 
   return `${num} INR`;
 }
+
+/**
+ * ================================
+ * FORMAT DATE FOR CUSTOMER
+ * ================================
+ */
 
 function formatDateForMessage(dateStr) {
   try {
@@ -121,11 +137,18 @@ function formatDateForMessage(dateStr) {
     const monthIdx = parseInt(parts[1], 10) - 1;
     const day = parseInt(parts[2], 10);
 
-    return `${months[monthIdx]} ${day}`;
+    return `${months[monthIdx]} ${day}, ${year}`;
+
   } catch (e) {
     return dateStr;
   }
 }
+
+/**
+ * ================================
+ * AVAILABLE SLOTS
+ * ================================
+ */
 
 function getSlotsForDate(dateStr) {
   return [
@@ -148,11 +171,18 @@ function getSlotsForDate(dateStr) {
   ];
 }
 
+/**
+ * ================================
+ * GET AVAILABLE SLOTS
+ * ================================
+ */
+
 async function getAvailableSlots(
   businessId,
   agentId,
   dateStr
 ) {
+
   const allSlots = getSlotsForDate(dateStr);
 
   const {
@@ -161,10 +191,12 @@ async function getAvailableSlots(
   } = await supabase
     .from('site_tours')
     .select('slot_time')
+    .eq('business_id', businessId)
     .eq('agent_id', agentId)
     .eq('status', 'CONFIRMED');
 
   if (error) {
+
     console.error(
       '❌ Error fetching booked tours:',
       error.message
@@ -180,6 +212,7 @@ async function getAvailableSlots(
   );
 
   return allSlots.filter(slot => {
+
     const slotTimeMs =
       new Date(slot.slotTimeISO).getTime();
 
@@ -187,14 +220,22 @@ async function getAvailableSlots(
   });
 }
 
+/**
+ * ================================
+ * MATCH CUSTOMER SLOT INPUT
+ * ================================
+ */
+
 function matchInputToSlot(
   inputText,
   availableSlots,
   allSlots
 ) {
+
   const cleanInput =
     inputText.trim().toLowerCase();
 
+  // Customer replied with number
   const index =
     parseInt(cleanInput, 10);
 
@@ -206,6 +247,7 @@ function matchInputToSlot(
     return availableSlots[index - 1];
   }
 
+  // Customer replied with time
   for (const slot of allSlots) {
 
     const timeStr =
@@ -250,7 +292,14 @@ function matchInputToSlot(
   return null;
 }
 
+/**
+ * ================================
+ * PARSE TODAY / TOMORROW
+ * ================================
+ */
+
 function parseDateChoice(text) {
+
   const clean =
     text.trim().toLowerCase();
 
@@ -263,6 +312,7 @@ function parseDateChoice(text) {
     );
 
   const format = (d) => {
+
     const yyyy =
       d.getUTCFullYear();
 
@@ -310,7 +360,7 @@ function parseDateChoice(text) {
 
 /**
  * ================================
- * PROCESS WHATSAPP WEBHOOK
+ * MAIN WHATSAPP PROCESSOR
  * ================================
  */
 
@@ -328,6 +378,7 @@ export async function processWhatsAppWebhook(body) {
       change?.value;
 
     if (!value) {
+
       console.log(
         '⚠️ Webhook received without value.'
       );
@@ -337,7 +388,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * WHATSAPP MESSAGE STATUS
+     * MESSAGE DELIVERY STATUS
      * ================================
      */
 
@@ -394,7 +445,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * INCOMING MESSAGE
+     * CUSTOMER MESSAGE
      * ================================
      */
 
@@ -412,7 +463,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * MESSAGE DEDUPLICATION
+     * DEDUPLICATION
      * ================================
      */
 
@@ -422,7 +473,9 @@ export async function processWhatsAppWebhook(body) {
     if (messageId) {
 
       if (
-        processedMessageIds.has(messageId)
+        processedMessageIds.has(
+          messageId
+        )
       ) {
 
         console.log(
@@ -454,7 +507,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * SUPPORTED MESSAGE TYPE
+     * TEXT ONLY
      * ================================
      */
 
@@ -473,7 +526,8 @@ export async function processWhatsAppWebhook(body) {
       message.from;
 
     const senderName =
-      value.contacts?.[0]?.profile?.name ||
+      value.contacts?.[0]
+        ?.profile?.name ||
       'Unknown Contact';
 
     const messageBody =
@@ -524,7 +578,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * 1. IDENTIFY BUSINESS
+     * FIND BUSINESS
      * ================================
      */
 
@@ -543,7 +597,7 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.error(
-        '❌ Failed to fetch business for webhook:',
+        '❌ Failed to fetch business:',
         busError?.message
       );
 
@@ -556,9 +610,13 @@ export async function processWhatsAppWebhook(body) {
     const businessId =
       business.id;
 
+    console.log(
+      `🏢 Business: ${business.name}`
+    );
+
     /**
      * ================================
-     * 2. FIND OR CREATE LEAD
+     * FIND OR CREATE LEAD
      * ================================
      */
 
@@ -568,8 +626,14 @@ export async function processWhatsAppWebhook(body) {
     } = await supabase
       .from('leads')
       .select('*')
-      .eq('business_id', businessId)
-      .eq('phone', fromPhone)
+      .eq(
+        'business_id',
+        businessId
+      )
+      .eq(
+        'phone',
+        fromPhone
+      )
       .maybeSingle();
 
     if (leadError) {
@@ -639,19 +703,23 @@ export async function processWhatsAppWebhook(body) {
           .update({
             name: senderName
           })
-          .eq('id', lead.id)
+          .eq(
+            'id',
+            lead.id
+          )
           .select()
           .single();
 
         if (updatedLead) {
-          lead = updatedLead;
+          lead =
+            updatedLead;
         }
       }
     }
 
     /**
      * ================================
-     * 3. FIND ACTIVE AGENT
+     * FIND ACTIVE AGENT
      * ================================
      */
 
@@ -661,7 +729,10 @@ export async function processWhatsAppWebhook(body) {
     } = await supabase
       .from('agents')
       .select('*')
-      .eq('business_id', businessId)
+      .eq(
+        'business_id',
+        businessId
+      )
       .limit(1);
 
     if (
@@ -671,7 +742,7 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.error(
-        '❌ Failed to retrieve agent for business:',
+        '❌ Failed to retrieve agent:',
         agentError?.message
       );
 
@@ -688,7 +759,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * 4. STATE MACHINE
+     * DETERMINE CONVERSATION STATE
      * ================================
      */
 
@@ -700,7 +771,9 @@ export async function processWhatsAppWebhook(body) {
       null;
 
     if (
-      state.startsWith('AWAITING_SLOT:')
+      state.startsWith(
+        'AWAITING_SLOT:'
+      )
     ) {
 
       pendingDate =
@@ -726,10 +799,6 @@ export async function processWhatsAppWebhook(body) {
       state === 'BOOKED'
     ) {
 
-      console.log(
-        '📊 State is BOOKED. Sending confirmation reminder.'
-      );
-
       await sendWhatsAppMessage(
         fromPhone,
         `Your site visit is already confirmed. ✅\n\nIf you'd like to change or cancel your appointment, let me know.`
@@ -740,7 +809,7 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * AWAITING SLOT STATE
+     * AWAITING SLOT
      * ================================
      */
 
@@ -750,7 +819,7 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.log(
-        `🎯 AWAITING_SLOT state for date ${pendingDate}. Processing customer selection...`
+        `🎯 Waiting for slot selection for ${pendingDate}`
       );
 
       const availableSlots =
@@ -775,7 +844,7 @@ export async function processWhatsAppWebhook(body) {
       if (selectedSlot) {
 
         console.log(
-          `📌 Match found! Attempting booking for: ${selectedSlot.slotTimeISO}`
+          `📌 Match found: ${selectedSlot.slotTimeISO}`
         );
 
         const result =
@@ -787,18 +856,28 @@ export async function processWhatsAppWebhook(body) {
               selectedSlot.slotTimeISO
           });
 
+        /**
+         * ================================
+         * BOOKING SUCCESS
+         * ================================
+         */
+
         if (result.success) {
 
           console.log(
-            `✅ Booking confirmed for slot: ${selectedSlot.slotTimeISO}`
+            `✅ Booking confirmed: ${selectedSlot.slotTimeISO}`
           );
 
           await supabase
             .from('leads')
             .update({
-              conversation_state: 'BOOKED'
+              conversation_state:
+                'BOOKED'
             })
-            .eq('id', lead.id);
+            .eq(
+              'id',
+              lead.id
+            );
 
           const dateFormatted =
             formatDateForMessage(
@@ -811,13 +890,21 @@ export async function processWhatsAppWebhook(body) {
           );
 
           return;
+        }
 
-        } else if (
-          result.reason === 'SLOT_TAKEN'
+        /**
+         * ================================
+         * SLOT TAKEN
+         * ================================
+         */
+
+        if (
+          result.reason ===
+          'SLOT_TAKEN'
         ) {
 
           console.log(
-            `⚠️ Slot taken: ${selectedSlot.slotTimeISO}. Regenerating available slots...`
+            '⚠️ Slot was taken. Refreshing slots...'
           );
 
           const remainingSlots =
@@ -854,6 +941,7 @@ export async function processWhatsAppWebhook(body) {
 
             remainingSlots.forEach(
               (slot, idx) => {
+
                 msg +=
                   `${idx + 1}️⃣ ${slot.timeLabel}\n`;
               }
@@ -869,105 +957,88 @@ export async function processWhatsAppWebhook(body) {
           }
 
           return;
-
-        } else {
-
-          console.error(
-            '❌ Unknown error during booking:',
-            result.error
-          );
-
-          await sendWhatsAppMessage(
-            fromPhone,
-            `Sorry, something went wrong while booking your slot. Please try again.`
-          );
-
-          return;
         }
 
-      } else {
+        /**
+         * ================================
+         * UNKNOWN BOOKING ERROR
+         * ================================
+         */
 
-        console.log(
-          `⚠️ Customer input "${messageBody}" did not match any available slot.`
+        console.error(
+          '❌ Unknown booking error:',
+          result.error
         );
-
-        let msg =
-          `I couldn't recognize that selection. Please choose from the available times for ${formatDateForMessage(pendingDate)}:\n\n`;
-
-        availableSlots.forEach(
-          (slot, idx) => {
-            msg +=
-              `${idx + 1}️⃣ ${slot.timeLabel}\n`;
-          }
-        );
-
-        msg +=
-          `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
 
         await sendWhatsAppMessage(
           fromPhone,
-          msg
+          `Sorry, something went wrong while booking your slot. Please try again.`
         );
 
         return;
       }
+
+      /**
+       * ================================
+       * INVALID SLOT INPUT
+       * ================================
+       */
+
+      console.log(
+        `⚠️ Invalid slot selection: "${messageBody}"`
+      );
+
+      let msg =
+        `I couldn't recognize that selection. Please choose from the available times for ${formatDateForMessage(pendingDate)}:\n\n`;
+
+      availableSlots.forEach(
+        (slot, idx) => {
+
+          msg +=
+            `${idx + 1}️⃣ ${slot.timeLabel}\n`;
+        }
+      );
+
+      msg +=
+        `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
+
+      await sendWhatsAppMessage(
+        fromPhone,
+        msg
+      );
+
+      return;
     }
 
     /**
      * ================================
-     * AI EXTRACTION
+     * AI LEAD EXTRACTION
      * ================================
-     *
-     * IMPORTANT:
-     * We now pass the EXISTING lead information
-     * to extractLeadInfo().
-     *
-     * This allows multi-message qualification:
-     *
-     * Message 1: "I want a 3BHK"
-     * Message 2: "1 cr"
-     *
-     * AI receives:
-     * Existing property_type = 3BHK
-     * Existing budget = unknown
-     * New message = 1 cr
-     *
-     * Therefore the information is preserved.
      */
 
     console.log(
       '🧠 Sending message to OpenAI for extraction...'
     );
 
-    console.log(
-      '🧠 Existing lead context:',
-      JSON.stringify(
-        {
-          property_type:
-            lead.property_type || null,
-          budget:
-            lead.budget || null
-        },
-        null,
-        2
-      )
-    );
-
     const leadInfo =
       await extractLeadInfo(
         messageBody,
-        state,
-        {
-          property_type:
-            lead.property_type || null,
-
-          budget:
-            lead.budget || null
-        }
+        state
       );
 
     console.log(
-      '🤖 AI Lead Extraction output:',
+      '\n===================================='
+    );
+
+    console.log(
+      '🤖 AI LEAD EXTRACTION'
+    );
+
+    console.log(
+      '===================================='
+    );
+
+    console.log(
       JSON.stringify(
         leadInfo,
         null,
@@ -975,13 +1046,21 @@ export async function processWhatsAppWebhook(body) {
       )
     );
 
+    console.log(
+      '====================================\n'
+    );
+
     /**
      * ================================
-     * UPDATE LEAD DETAILS
+     * UPDATE LEAD DATA
      * ================================
      */
 
     const updateData = {};
+
+    /**
+     * Property type
+     */
 
     if (
       leadInfo.property_type &&
@@ -993,23 +1072,45 @@ export async function processWhatsAppWebhook(body) {
         leadInfo.property_type;
     }
 
+    /**
+     * Budget
+     *
+     * IMPORTANT:
+     * Store normalized INR number as
+     * a string because the database
+     * column is VARCHAR.
+     */
+
     if (
       leadInfo.budget !== null &&
-      leadInfo.budget !== undefined &&
-      String(leadInfo.budget) !==
-      String(lead.budget)
+      leadInfo.budget !== undefined
     ) {
 
-      updateData.budget =
+      const newBudget =
         String(leadInfo.budget);
+
+      if (
+        newBudget !==
+        String(lead.budget || '')
+      ) {
+
+        updateData.budget =
+          newBudget;
+      }
     }
+
+    /**
+     * ================================
+     * SAVE EXTRACTED DATA
+     * ================================
+     */
 
     if (
       Object.keys(updateData).length > 0
     ) {
 
       console.log(
-        '💾 Updating lead details in database:',
+        '💾 Updating lead details:',
         updateData
       );
 
@@ -1019,7 +1120,10 @@ export async function processWhatsAppWebhook(body) {
       } = await supabase
         .from('leads')
         .update(updateData)
-        .eq('id', lead.id)
+        .eq(
+          'id',
+          lead.id
+        )
         .select()
         .single();
 
@@ -1030,20 +1134,27 @@ export async function processWhatsAppWebhook(body) {
           upError.message
         );
 
+        /**
+         * IMPORTANT:
+         * Even if the DB update fails,
+         * keep the newly extracted values
+         * in memory for this message.
+         */
+
+        lead = {
+          ...lead,
+          ...updateData
+        };
+
       } else if (updatedLead) {
 
         lead =
           updatedLead;
 
         console.log(
-          '✅ Lead information updated:',
+          '✅ Lead successfully updated:',
           JSON.stringify(
-            {
-              property_type:
-                lead.property_type,
-              budget:
-                lead.budget
-            },
+            lead,
             null,
             2
           )
@@ -1053,15 +1164,20 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * DATE SELECTION
+     * CHECK CHOSEN DATE
      * ================================
      */
 
     let chosenDate =
       null;
 
+    /**
+     * Customer choosing Today/Tomorrow
+     */
+
     if (
-      state === 'READY_FOR_BOOKING'
+      state ===
+      'READY_FOR_BOOKING'
     ) {
 
       chosenDate =
@@ -1071,14 +1187,13 @@ export async function processWhatsAppWebhook(body) {
     }
 
     /**
-     * ================================
-     * EXPLICIT DATE REQUEST
-     * ================================
+     * AI detected a specific date
      */
 
     if (
       !chosenDate &&
-      leadInfo.intent === 'BOOK_TOUR' &&
+      leadInfo.intent ===
+      'BOOK_TOUR' &&
       leadInfo.requested_tour_iso
     ) {
 
@@ -1122,14 +1237,14 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * DATE SELECTED → SHOW SLOTS
+     * DATE CHOSEN
      * ================================
      */
 
     if (chosenDate) {
 
       console.log(
-        `📅 Date chosen: ${chosenDate}. Querying available slots...`
+        `📅 Date chosen: ${chosenDate}`
       );
 
       const availableSlots =
@@ -1197,16 +1312,17 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * SITE VISIT INTENT
+     * BOOK TOUR INTENT
      * ================================
      */
 
     if (
-      leadInfo.intent === 'BOOK_TOUR'
+      leadInfo.intent ===
+      'BOOK_TOUR'
     ) {
 
       console.log(
-        '📅 Site-visit intent detected. Asking for date selection...'
+        '📅 Site visit intent detected.'
       );
 
       await sendWhatsAppMessage(
@@ -1232,6 +1348,17 @@ export async function processWhatsAppWebhook(body) {
      * ================================
      * FULLY QUALIFIED LEAD
      * ================================
+     *
+     * IMPORTANT:
+     * This check uses the UPDATED
+     * "lead" object.
+     *
+     * So:
+     *
+     * 1 Cr → budget saved
+     * 3BHK → property saved
+     *
+     * Then the lead becomes qualified.
      */
 
     if (
@@ -1240,12 +1367,12 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.log(
-        `📊 Lead is fully qualified (Property: ${lead.property_type}, Budget: ${lead.budget}). Asking for site visit...`
+        `✅ Lead is fully qualified. Property: ${lead.property_type}, Budget: ${lead.budget}`
       );
 
       await sendWhatsAppMessage(
         fromPhone,
-        `Great! I have noted your requirements:\n- Property Type: ${lead.property_type}\n- Budget: ${formatBudget(lead.budget)}\n\nWould you like to schedule a site visit to view the property?`
+        `Great! I've noted your requirements:\n\n🏠 Property Type: ${lead.property_type}\n💰 Budget: ${formatBudget(lead.budget)}\n\nWould you like to schedule a site visit to view the property?`
       );
 
       await supabase
@@ -1264,15 +1391,19 @@ export async function processWhatsAppWebhook(body) {
 
     /**
      * ================================
-     * CLARIFICATION
+     * QUALIFICATION CLARIFICATION
      * ================================
      */
 
     console.log(
-      '📊 Lead is not fully qualified. Asking clarification questions.'
+      `📊 Qualification check - Property: ${lead.property_type}, Budget: ${lead.budget}`
     );
 
     let clarificationMsg;
+
+    /**
+     * Neither property nor budget
+     */
 
     if (
       !lead.property_type &&
@@ -1280,19 +1411,51 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       clarificationMsg =
-        `Hi ${senderName}! 👋 Thanks for reaching out.\n\nI'd be happy to help you find the right property. Could you tell me:\n1. What type of property you're looking for (e.g., 2BHK, 3BHK, Villa)?\n2. Your approximate budget?`;
+        `Hi ${senderName}! 👋 Thanks for reaching out.\n\n` +
+        `I'd be happy to help you find the right property. ` +
+        `Could you tell me:\n\n` +
+        `1️⃣ What type of property you're looking for ` +
+        `(e.g., 2BHK, 3BHK, Villa)?\n` +
+        `2️⃣ Your approximate budget?`;
+    }
 
-    } else if (
-      !lead.property_type
+    /**
+     * Budget exists but property missing
+     */
+
+    else if (
+      !lead.property_type &&
+      lead.budget
     ) {
 
       clarificationMsg =
-        `Thanks! I've noted your budget of ${formatBudget(lead.budget)}. Could you tell me what type of property you're looking for (e.g. 2BHK, 3BHK, Villa)?`;
+        `Thanks! I've noted your budget of ${formatBudget(lead.budget)}. 💰\n\n` +
+        `Could you tell me what type of property you're looking for?\n\n` +
+        `For example: 2BHK, 3BHK, Villa or Plot.`;
+    }
 
-    } else {
+    /**
+     * Property exists but budget missing
+     */
+
+    else if (
+      lead.property_type &&
+      !lead.budget
+    ) {
 
       clarificationMsg =
-        `Thanks! I've noted your preference for a ${lead.property_type}. Could you tell me your approximate budget?`;
+        `Thanks! I've noted your preference for a ${lead.property_type}. 🏠\n\n` +
+        `Could you tell me your approximate budget?`;
+    }
+
+    /**
+     * Fallback
+     */
+
+    else {
+
+      clarificationMsg =
+        `Thanks for the information! Could you tell me a little more about the property you're looking for?`;
     }
 
     await sendWhatsAppMessage(
@@ -1334,7 +1497,6 @@ process.on(
       '⚠️ Uncaught Exception:',
       err
     );
-
   }
 );
 
@@ -1346,7 +1508,6 @@ process.on(
       '⚠️ Unhandled Rejection:',
       reason
     );
-
   }
 );
 
@@ -1368,7 +1529,6 @@ const server =
       console.log(
         `👉 Webhook endpoint: http://localhost:${PORT}/webhook`
       );
-
     }
   );
 
@@ -1383,7 +1543,8 @@ server.on(
   (err) => {
 
     if (
-      err.code === 'EADDRINUSE'
+      err.code ===
+      'EADDRINUSE'
     ) {
 
       console.error(
