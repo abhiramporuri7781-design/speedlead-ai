@@ -1178,10 +1178,10 @@ export async function processWhatsAppWebhook(body) {
      * AI LEAD EXTRACTION
      * ================================
      *
-     * IMPORTANT FIX:
+     * IMPORTANT:
      *
-     * We now pass the EXISTING LEAD
-     * to extractLeadInfo().
+     * We pass the EXISTING LEAD to
+     * extractLeadInfo().
      *
      * This allows the AI to remember
      * information collected earlier.
