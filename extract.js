@@ -153,6 +153,10 @@ Examples:
 10. needs_clarification should be TRUE only when the combined information is insufficient to understand the customer's requirement.
 
 11. If both property_type and budget are known after combining previous information with the current message, needs_clarification MUST be false.
+
+12. A bare budget-only message (e.g. "1cr", "80L") with NO property type known (neither in the current message nor in the previously collected lead information) still counts as partial progress, NOT as "OTHER" intent. In that case:
+    - intent should reflect ASK_INFO (the customer is providing qualification info, not going off-topic)
+    - needs_clarification should be true ONLY because property_type is still missing, not because the message is unclear.
 `;
 
   try {
@@ -161,6 +165,7 @@ Examples:
       await openai.chat.completions.create({
 
         model: 'gpt-4o-mini',
+        temperature: 0,
 
         messages: [
 
