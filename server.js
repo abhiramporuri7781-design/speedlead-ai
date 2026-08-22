@@ -650,7 +650,40 @@ export async function processWhatsAppWebhook(body) {
      * ================================
      * 1. IDENTIFY BUSINESS
      * ================================
+     *
+     * IMPORTANT:
+     *
+     * Every WhatsApp Business number has
+     * a unique Meta phone_number_id, sent
+     * inside value.metadata on every
+     * webhook payload.
+     *
+     * We match this against the
+     * businesses.whatsapp_phone_id column
+     * to identify EXACTLY which client
+     * this message belongs to.
+     *
+     * This replaces the old, unsafe
+     * ".limit(1)" query which just grabbed
+     * whichever business row came first -
+     * that only worked by accident with a
+     * single business in the table, and
+     * would break as soon as a second
+     * client was onboarded.
      */
+
+    const incomingPhoneNumberId =
+      value.metadata?.phone_number_id;
+
+    if (!incomingPhoneNumberId) {
+
+      console.error(
+        '❌ Webhook payload missing metadata.phone_number_id. Cannot identify business.'
+      );
+
+      return;
+
+    }
 
     const {
       data: businesses,
@@ -661,6 +694,11 @@ export async function processWhatsAppWebhook(body) {
 
       .select('*')
 
+      .eq(
+        'whatsapp_phone_id',
+        incomingPhoneNumberId
+      )
+
       .limit(1);
 
     if (
@@ -670,7 +708,7 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.error(
-        '❌ Failed to fetch business for webhook:',
+        `❌ Failed to fetch business for phone_number_id: ${incomingPhoneNumberId}`,
         busError?.message
       );
 
@@ -913,6 +951,13 @@ export async function processWhatsAppWebhook(body) {
      * ================================
      * STATE: BOOKED
      * ================================
+     *
+     * A customer in this state already has
+     * a CONFIRMED site_tours row. We run a
+     * lightweight intent check on their new
+     * message to see if they're trying to
+     * CANCEL or RESCHEDULE, instead of just
+     * always repeating the same reminder.
      */
 
     if (
@@ -920,7 +965,162 @@ export async function processWhatsAppWebhook(body) {
     ) {
 
       console.log(
-        '📊 State is BOOKED. Sending confirmation reminder.'
+        '📊 State is BOOKED. Checking intent (cancel/reschedule/other)...'
+      );
+
+      const bookedIntentInfo =
+        await extractLeadInfo(
+          messageBody,
+          state,
+          lead
+        );
+
+      console.log(
+        '🤖 BOOKED-state intent check:',
+        JSON.stringify(bookedIntentInfo, null, 2)
+      );
+
+      /**
+       * CUSTOMER WANTS TO CANCEL
+       */
+
+      if (
+        bookedIntentInfo.intent === 'CANCEL'
+      ) {
+
+        console.log(
+          `🗑️ Cancel intent detected for lead ${lead.id}. Cancelling existing tour...`
+        );
+
+        const {
+          error: cancelError
+        } = await supabase
+
+          .from('site_tours')
+
+          .update({
+            status: 'CANCELLED'
+          })
+
+          .eq('lead_id', lead.id)
+
+          .eq('status', 'CONFIRMED');
+
+        if (cancelError) {
+
+          console.error(
+            '❌ Failed to cancel site tour:',
+            cancelError.message
+          );
+
+          await sendWhatsAppMessage(
+
+            fromPhone,
+
+            `Sorry, something went wrong while cancelling your visit. Please try again in a moment.`
+
+          );
+
+          return;
+
+        }
+
+        await supabase
+
+          .from('leads')
+
+          .update({
+            conversation_state: 'READY_FOR_BOOKING'
+          })
+
+          .eq('id', lead.id);
+
+        await sendWhatsAppMessage(
+
+          fromPhone,
+
+          `Your site visit has been cancelled. ❌\n\nWhenever you're ready to schedule a new visit, just let me know!`
+
+        );
+
+        return;
+
+      }
+
+      /**
+       * CUSTOMER WANTS TO RESCHEDULE
+       */
+
+      if (
+        bookedIntentInfo.intent === 'RESCHEDULE'
+      ) {
+
+        console.log(
+          `🔄 Reschedule intent detected for lead ${lead.id}. Cancelling existing tour and restarting date selection...`
+        );
+
+        const {
+          error: rescheduleError
+        } = await supabase
+
+          .from('site_tours')
+
+          .update({
+            status: 'CANCELLED'
+          })
+
+          .eq('lead_id', lead.id)
+
+          .eq('status', 'CONFIRMED');
+
+        if (rescheduleError) {
+
+          console.error(
+            '❌ Failed to cancel site tour for reschedule:',
+            rescheduleError.message
+          );
+
+          await sendWhatsAppMessage(
+
+            fromPhone,
+
+            `Sorry, something went wrong while rescheduling your visit. Please try again in a moment.`
+
+          );
+
+          return;
+
+        }
+
+        await supabase
+
+          .from('leads')
+
+          .update({
+            conversation_state: 'READY_FOR_BOOKING'
+          })
+
+          .eq('id', lead.id);
+
+        await sendWhatsAppMessage(
+
+          fromPhone,
+
+          `No problem! Let's find a new time for your visit.\n\nWhich day would you prefer?\n\n1️⃣ Today\n2️⃣ Tomorrow`
+
+        );
+
+        return;
+
+      }
+
+      /**
+       * NEITHER CANCEL NOR RESCHEDULE -
+       * FALL BACK TO GENERIC REMINDER
+       */
+
+      console.log(
+        '📊 No cancel/reschedule intent detected. Sending confirmation reminder.'
       );
 
       await sendWhatsAppMessage(
