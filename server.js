@@ -255,15 +255,6 @@ function matchInputToSlot(
   const cleanInput =
     inputText.trim().toLowerCase();
 
-  /**
-   * Customer entered a number
-   *
-   * Example:
-   * 1
-   * 2
-   * 3
-   */
-
   const index =
     parseInt(cleanInput, 10);
 
@@ -276,10 +267,6 @@ function matchInputToSlot(
     return availableSlots[index - 1];
 
   }
-
-  /**
-   * Customer entered a time
-   */
 
   for (const slot of allSlots) {
 
@@ -350,11 +337,6 @@ function parseDateChoice(text) {
 
   const now = new Date();
 
-  /**
-   * Convert current UTC time to
-   * approximate India/Kolkata time.
-   */
-
   const kolkataNow =
     new Date(
       now.getTime() +
@@ -422,12 +404,6 @@ export async function processWhatsAppWebhook(body) {
 
   try {
 
-    /**
-     * ================================
-     * EXTRACT META PAYLOAD
-     * ================================
-     */
-
     const entry =
       body.entry?.[0];
 
@@ -446,12 +422,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * ================================
-     * WHATSAPP DELIVERY STATUS
-     * ================================
-     */
 
     const status =
       value.statuses?.[0];
@@ -506,12 +476,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * CUSTOMER MESSAGE
-     * ================================
-     */
-
     const message =
       value.messages?.[0];
 
@@ -524,12 +488,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * ================================
-     * DUPLICATE MESSAGE PROTECTION
-     * ================================
-     */
 
     const messageId =
       message.id;
@@ -552,10 +510,6 @@ export async function processWhatsAppWebhook(body) {
         messageId
       );
 
-      /**
-       * Prevent unlimited memory growth.
-       */
-
       if (
         processedMessageIds.size > 5000
       ) {
@@ -574,12 +528,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * TEXT ONLY
-     * ================================
-     */
-
     if (
       message.type !== 'text'
     ) {
@@ -591,12 +539,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * ================================
-     * CUSTOMER DETAILS
-     * ================================
-     */
 
     const fromPhone =
       message.from;
@@ -646,34 +588,10 @@ export async function processWhatsAppWebhook(body) {
       '====================================\n'
     );
 
-    /**
-     * ================================
-     * 1. IDENTIFY BUSINESS
-     * ================================
-     *
-     * IMPORTANT:
-     *
-     * Every WhatsApp Business number has
-     * a unique Meta phone_number_id, sent
-     * inside value.metadata on every
-     * webhook payload.
-     *
-     * We match this against the
-     * businesses.whatsapp_phone_id column
-     * to identify EXACTLY which client
-     * this message belongs to.
-     *
-     * This replaces the old, unsafe
-     * ".limit(1)" query which just grabbed
-     * whichever business row came first -
-     * that only worked by accident with a
-     * single business in the table, and
-     * would break as soon as a second
-     * client was onboarded.
-     */
-
     const incomingPhoneNumberId =
       value.metadata?.phone_number_id;
+
+    console.log('🔍 DEBUG incomingPhoneNumberId:', JSON.stringify(incomingPhoneNumberId), typeof incomingPhoneNumberId);
 
     if (!incomingPhoneNumberId) {
 
@@ -726,12 +644,6 @@ export async function processWhatsAppWebhook(body) {
       `🏢 Business: ${business.name}`
     );
 
-    /**
-     * ================================
-     * 2. FIND OR CREATE LEAD
-     * ================================
-     */
-
     let {
       data: lead,
       error: leadError
@@ -763,10 +675,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * CREATE NEW LEAD
-     */
 
     if (!lead) {
 
@@ -818,11 +726,6 @@ export async function processWhatsAppWebhook(body) {
         `👤 Lead found: "${lead.name}" (ID: ${lead.id}, State: ${lead.conversation_state})`
       );
 
-      /**
-       * Update unknown name if Meta
-       * provides the customer name.
-       */
-
       if (
         lead.name === 'Unknown Contact' &&
         senderName !== 'Unknown Contact'
@@ -857,12 +760,6 @@ export async function processWhatsAppWebhook(body) {
       }
 
     }
-
-    /**
-     * ================================
-     * 3. FIND AGENT
-     * ================================
-     */
 
     const {
       data: agents,
@@ -906,12 +803,6 @@ export async function processWhatsAppWebhook(body) {
     const agent =
       agents[0];
 
-    /**
-     * ================================
-     * 4. CURRENT CONVERSATION STATE
-     * ================================
-     */
-
     let state =
       lead.conversation_state ||
       'NEW';
@@ -947,19 +838,6 @@ export async function processWhatsAppWebhook(body) {
       `📊 Existing Budget: ${lead.budget || 'none'}`
     );
 
-    /**
-     * ================================
-     * STATE: BOOKED
-     * ================================
-     *
-     * A customer in this state already has
-     * a CONFIRMED site_tours row. We run a
-     * lightweight intent check on their new
-     * message to see if they're trying to
-     * CANCEL or RESCHEDULE, instead of just
-     * always repeating the same reminder.
-     */
-
     if (
       state === 'BOOKED'
     ) {
@@ -979,10 +857,6 @@ export async function processWhatsAppWebhook(body) {
         '🤖 BOOKED-state intent check:',
         JSON.stringify(bookedIntentInfo, null, 2)
       );
-
-      /**
-       * CUSTOMER WANTS TO CANCEL
-       */
 
       if (
         bookedIntentInfo.intent === 'CANCEL'
@@ -1047,10 +921,6 @@ export async function processWhatsAppWebhook(body) {
 
       }
 
-      /**
-       * CUSTOMER WANTS TO RESCHEDULE
-       */
-
       if (
         bookedIntentInfo.intent === 'RESCHEDULE'
       ) {
@@ -1114,11 +984,6 @@ export async function processWhatsAppWebhook(body) {
 
       }
 
-      /**
-       * NEITHER CANCEL NOR RESCHEDULE -
-       * FALL BACK TO GENERIC REMINDER
-       */
-
       console.log(
         '📊 No cancel/reschedule intent detected. Sending confirmation reminder.'
       );
@@ -1134,12 +999,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * ================================
-     * STATE: AWAITING SLOT
-     * ================================
-     */
 
     if (
       state === 'AWAITING_SLOT' &&
@@ -1169,10 +1028,6 @@ export async function processWhatsAppWebhook(body) {
           allSlots
         );
 
-      /**
-       * CUSTOMER SELECTED A SLOT
-       */
-
       if (selectedSlot) {
 
         console.log(
@@ -1194,10 +1049,6 @@ export async function processWhatsAppWebhook(body) {
               selectedSlot.slotTimeISO
 
           });
-
-        /**
-         * BOOKING SUCCESS
-         */
 
         if (
           result.success
@@ -1237,10 +1088,6 @@ export async function processWhatsAppWebhook(body) {
           return;
 
         }
-
-        /**
-         * SLOT WAS TAKEN
-         */
 
         else if (
           result.reason ===
@@ -1312,10 +1159,6 @@ export async function processWhatsAppWebhook(body) {
 
         }
 
-        /**
-         * UNKNOWN BOOKING ERROR
-         */
-
         else {
 
           console.error(
@@ -1336,10 +1179,6 @@ export async function processWhatsAppWebhook(body) {
         }
 
       }
-
-      /**
-       * CUSTOMER INPUT DIDN'T MATCH SLOT
-       */
 
       else {
 
@@ -1372,43 +1211,6 @@ export async function processWhatsAppWebhook(body) {
       }
 
     }
-
-    /**
-     * ================================
-     * AI LEAD EXTRACTION
-     * ================================
-     *
-     * IMPORTANT:
-     *
-     * We pass the EXISTING LEAD to
-     * extractLeadInfo().
-     *
-     * This allows the AI to remember
-     * information collected earlier.
-     *
-     * Example:
-     *
-     * Message 1:
-     * "3BHK"
-     *
-     * Message 2:
-     * "1cr"
-     *
-     * AI receives:
-     *
-     * Existing:
-     * property_type = 3BHK
-     * budget = null
-     *
-     * New message:
-     * 1cr
-     *
-     * Result:
-     * property_type = 3BHK
-     * budget = 10000000
-     *
-     * ================================
-     */
 
     console.log(
       '🧠 Sending message to OpenAI for extraction...'
@@ -1463,17 +1265,7 @@ export async function processWhatsAppWebhook(body) {
       '====================================\n'
     );
 
-    /**
-     * ================================
-     * UPDATE LEAD INFORMATION
-     * ================================
-     */
-
     const updateData = {};
-
-    /**
-     * Property type
-     */
 
     if (
       leadInfo.property_type &&
@@ -1485,10 +1277,6 @@ export async function processWhatsAppWebhook(body) {
         leadInfo.property_type;
 
     }
-
-    /**
-     * Budget
-     */
 
     if (
       leadInfo.budget !== null &&
@@ -1511,10 +1299,6 @@ export async function processWhatsAppWebhook(body) {
       }
 
     }
-
-    /**
-     * Save changes to database.
-     */
 
     if (
       Object.keys(updateData).length > 0
@@ -1552,14 +1336,6 @@ export async function processWhatsAppWebhook(body) {
 
       } else if (updatedLead) {
 
-        /**
-         * VERY IMPORTANT:
-         *
-         * Replace local lead with
-         * the newly updated database
-         * record.
-         */
-
         lead =
           updatedLead;
 
@@ -1578,20 +1354,8 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * CHECK DATE SELECTION
-     * ================================
-     */
-
     let chosenDate =
       null;
-
-    /**
-     * If customer is in
-     * READY_FOR_BOOKING and sends
-     * 1 or 2.
-     */
 
     if (
       state ===
@@ -1604,12 +1368,6 @@ export async function processWhatsAppWebhook(body) {
         );
 
     }
-
-    /**
-     * ================================
-     * EXPLICIT TOUR DATE
-     * ================================
-     */
 
     if (
       !chosenDate &&
@@ -1658,12 +1416,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * CUSTOMER CHOSE A DATE
-     * ================================
-     */
-
     if (chosenDate) {
 
       console.log(
@@ -1676,10 +1428,6 @@ export async function processWhatsAppWebhook(body) {
           agent.id,
           chosenDate
         );
-
-      /**
-       * No slots available
-       */
 
       if (
         availableSlots.length === 0
@@ -1708,10 +1456,6 @@ export async function processWhatsAppWebhook(body) {
           );
 
       }
-
-      /**
-       * Slots available
-       */
 
       else {
 
@@ -1755,12 +1499,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * SITE VISIT INTENT
-     * ================================
-     */
-
     if (
       leadInfo.intent ===
       'BOOK_TOUR'
@@ -1795,21 +1533,6 @@ export async function processWhatsAppWebhook(body) {
       return;
 
     }
-
-    /**
-     * ================================
-     * FULLY QUALIFIED LEAD
-     * ================================
-     *
-     * IMPORTANT:
-     *
-     * We check the DATABASE values,
-     * not leadInfo.needs_clarification.
-     *
-     * This is because the database is
-     * the source of truth after updating
-     * the lead.
-     */
 
     if (
       lead.property_type &&
@@ -1846,21 +1569,11 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * ================================
-     * QUALIFICATION CLARIFICATION
-     * ================================
-     */
-
     console.log(
       '📊 Lead is not fully qualified. Asking clarification question.'
     );
 
     let clarificationMsg;
-
-    /**
-     * NEITHER PROPERTY NOR BUDGET
-     */
 
     if (
       !lead.property_type &&
@@ -1872,11 +1585,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * BUDGET EXISTS
-     * PROPERTY MISSING
-     */
-
     else if (
       !lead.property_type &&
       lead.budget
@@ -1887,11 +1595,6 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    /**
-     * PROPERTY EXISTS
-     * BUDGET MISSING
-     */
-
     else if (
       lead.property_type &&
       !lead.budget
@@ -1901,10 +1604,6 @@ export async function processWhatsAppWebhook(body) {
         `Thanks! I've noted your preference for a ${lead.property_type}. 🏠\n\nCould you tell me your approximate budget?`;
 
     }
-
-    /**
-     * FALLBACK
-     */
 
     else {
 
@@ -1943,12 +1642,6 @@ export async function processWhatsAppWebhook(body) {
 
 }
 
-/**
- * ================================
- * GLOBAL ERROR HANDLERS
- * ================================
- */
-
 process.on(
   'uncaughtException',
   (err) => {
@@ -1973,12 +1666,6 @@ process.on(
   }
 );
 
-/**
- * ================================
- * START SERVER
- * ================================
- */
-
 const server =
   app.listen(
     PORT,
@@ -1994,12 +1681,6 @@ const server =
 
     }
   );
-
-/**
- * ================================
- * SERVER ERROR HANDLER
- * ================================
- */
 
 server.on(
   'error',
