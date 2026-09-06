@@ -13,23 +13,11 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-/**
- * ================================
- * HEALTH CHECK
- * ================================
- */
-
 app.get('/', (req, res) => {
   res
     .status(200)
     .send('WhatsApp Lead Automation Backend is active and running.');
 });
-
-/**
- * ================================
- * META WEBHOOK VERIFICATION
- * ================================
- */
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -53,18 +41,10 @@ app.get('/webhook', (req, res) => {
   return res.sendStatus(403);
 });
 
-/**
- * ================================
- * WHATSAPP WEBHOOK
- * ================================
- */
-
 app.post('/webhook', (req, res) => {
 
-  // Respond to Meta immediately.
   res.status(200).send('EVENT_RECEIVED');
 
-  // Process webhook asynchronously.
   processWhatsAppWebhook(req.body).catch((error) => {
     console.error(
       '❌ Error processing WhatsApp webhook:',
@@ -73,19 +53,7 @@ app.post('/webhook', (req, res) => {
   });
 });
 
-/**
- * ================================
- * MESSAGE DEDUPLICATION
- * ================================
- */
-
 export const processedMessageIds = new Set();
-
-/**
- * ================================
- * HELPER: FORMAT BUDGET
- * ================================
- */
 
 function formatBudget(budgetVal) {
 
@@ -110,29 +78,13 @@ function formatBudget(budgetVal) {
   return `${num} INR`;
 }
 
-/**
- * ================================
- * HELPER: FORMAT DATE
- * ================================
- */
-
 function formatDateForMessage(dateStr) {
 
   try {
 
     const months = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December'
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
     const parts = dateStr.split('-');
@@ -150,173 +102,72 @@ function formatDateForMessage(dateStr) {
   }
 }
 
-/**
- * ================================
- * HELPER: GET AVAILABLE SLOTS
- * ================================
- */
-
 function getSlotsForDate(dateStr) {
 
   return [
-
-    {
-      timeLabel: '10:00 AM',
-      slotTimeISO: `${dateStr}T10:00:00+05:30`
-    },
-
-    {
-      timeLabel: '11:30 AM',
-      slotTimeISO: `${dateStr}T11:30:00+05:30`
-    },
-
-    {
-      timeLabel: '2:00 PM',
-      slotTimeISO: `${dateStr}T14:00:00+05:30`
-    },
-
-    {
-      timeLabel: '4:30 PM',
-      slotTimeISO: `${dateStr}T16:30:00+05:30`
-    }
-
+    { timeLabel: '10:00 AM', slotTimeISO: `${dateStr}T10:00:00+05:30` },
+    { timeLabel: '11:30 AM', slotTimeISO: `${dateStr}T11:30:00+05:30` },
+    { timeLabel: '2:00 PM', slotTimeISO: `${dateStr}T14:00:00+05:30` },
+    { timeLabel: '4:30 PM', slotTimeISO: `${dateStr}T16:30:00+05:30` }
   ];
 }
 
-/**
- * ================================
- * GET AVAILABLE SLOTS
- * ================================
- */
-
-async function getAvailableSlots(
-  businessId,
-  agentId,
-  dateStr
-) {
+async function getAvailableSlots(businessId, agentId, dateStr) {
 
   const allSlots = getSlotsForDate(dateStr);
 
-  const {
-    data: bookedTours,
-    error
-  } = await supabase
-
+  const { data: bookedTours, error } = await supabase
     .from('site_tours')
-
     .select('slot_time')
-
     .eq('business_id', businessId)
-
     .eq('agent_id', agentId)
-
     .eq('status', 'CONFIRMED');
 
   if (error) {
-
-    console.error(
-      '❌ Error fetching booked tours:',
-      error.message
-    );
-
+    console.error('❌ Error fetching booked tours:', error.message);
     return allSlots;
   }
 
   const bookedTimes = new Set(
-
-    bookedTours.map(
-      tour => new Date(tour.slot_time).getTime()
-    )
-
+    bookedTours.map(tour => new Date(tour.slot_time).getTime())
   );
 
   return allSlots.filter(slot => {
-
-    const slotTimeMs =
-      new Date(slot.slotTimeISO).getTime();
-
+    const slotTimeMs = new Date(slot.slotTimeISO).getTime();
     return !bookedTimes.has(slotTimeMs);
-
   });
 }
 
-/**
- * ================================
- * MATCH CUSTOMER INPUT TO SLOT
- * ================================
- */
+function matchInputToSlot(inputText, availableSlots, allSlots) {
 
-function matchInputToSlot(
-  inputText,
-  availableSlots,
-  allSlots
-) {
+  const cleanInput = inputText.trim().toLowerCase();
 
-  const cleanInput =
-    inputText.trim().toLowerCase();
+  const index = parseInt(cleanInput, 10);
 
-  const index =
-    parseInt(cleanInput, 10);
-
-  if (
-    !isNaN(index) &&
-    index >= 1 &&
-    index <= availableSlots.length
-  ) {
-
+  if (!isNaN(index) && index >= 1 && index <= availableSlots.length) {
     return availableSlots[index - 1];
-
   }
 
   for (const slot of allSlots) {
 
-    const timeStr =
-      slot.timeLabel.toLowerCase();
-
-    const noSpaces =
-      timeStr.replace(/\s+/g, '');
-
-    const shortTime =
-      noSpaces.replace(':00', '');
-
-    const rawTime =
-      slot.timeLabel.split(' ')[0];
-
-    const hour =
-      rawTime.split(':')[0];
-
-    const period =
-      slot.timeLabel
-        .split(' ')[1]
-        .toLowerCase();
+    const timeStr = slot.timeLabel.toLowerCase();
+    const noSpaces = timeStr.replace(/\s+/g, '');
+    const shortTime = noSpaces.replace(':00', '');
+    const rawTime = slot.timeLabel.split(' ')[0];
+    const hour = rawTime.split(':')[0];
+    const period = slot.timeLabel.split(' ')[1].toLowerCase();
 
     if (
-
       cleanInput === timeStr ||
-
       cleanInput === noSpaces ||
-
       cleanInput === shortTime ||
-
       cleanInput === rawTime ||
-
       cleanInput === `${hour}${period}` ||
-
       cleanInput === `${hour}:00${period}` ||
-
       cleanInput === `${hour} ${period}` ||
-
-      (
-        cleanInput === hour &&
-        allSlots.filter(
-          s => s.timeLabel.startsWith(hour)
-        ).length === 1
-      )
-
+      (cleanInput === hour && allSlots.filter(s => s.timeLabel.startsWith(hour)).length === 1)
     ) {
-
       return slot;
-
     }
 
   }
@@ -324,887 +175,412 @@ function matchInputToSlot(
   return null;
 }
 
-/**
- * ================================
- * PARSE DATE CHOICE
- * ================================
- */
-
 function parseDateChoice(text) {
 
-  const clean =
-    text.trim().toLowerCase();
+  const clean = text.trim().toLowerCase();
 
   const now = new Date();
-
-  const kolkataNow =
-    new Date(
-      now.getTime() +
-      (5.5 * 60 * 60 * 1000)
-    );
+  const kolkataNow = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
 
   const format = (d) => {
-
-    const yyyy =
-      d.getUTCFullYear();
-
-    const mm =
-      String(
-        d.getUTCMonth() + 1
-      ).padStart(2, '0');
-
-    const dd =
-      String(
-        d.getUTCDate()
-      ).padStart(2, '0');
-
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   };
 
-  const todayStr =
-    format(kolkataNow);
+  const todayStr = format(kolkataNow);
+  const tomorrow = new Date(kolkataNow.getTime() + (24 * 60 * 60 * 1000));
+  const tomorrowStr = format(tomorrow);
 
-  const tomorrow =
-    new Date(
-      kolkataNow.getTime() +
-      (24 * 60 * 60 * 1000)
-    );
-
-  const tomorrowStr =
-    format(tomorrow);
-
-  if (
-    clean === '1' ||
-    clean === 'today'
-  ) {
-
+  if (clean === '1' || clean === 'today') {
     return todayStr;
-
   }
 
-  if (
-    clean === '2' ||
-    clean === 'tomorrow'
-  ) {
-
+  if (clean === '2' || clean === 'tomorrow') {
     return tomorrowStr;
-
   }
 
   return null;
 }
-
-/**
- * ================================
- * MAIN WHATSAPP PROCESSOR
- * ================================
- */
 
 export async function processWhatsAppWebhook(body) {
 
   try {
 
-    const entry =
-      body.entry?.[0];
-
-    const change =
-      entry?.changes?.[0];
-
-    const value =
-      change?.value;
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
 
     if (!value) {
-
-      console.log(
-        '⚠️ Webhook received without value.'
-      );
-
+      console.log('⚠️ Webhook received without value.');
       return;
-
     }
 
-    const status =
-      value.statuses?.[0];
+    const status = value.statuses?.[0];
 
     if (status) {
 
-      console.log(
-        '\n===================================='
-      );
-
-      console.log(
-        '📊 WHATSAPP MESSAGE STATUS'
-      );
-
-      console.log(
-        '===================================='
-      );
-
-      console.log(
-        `Message ID : ${status.id}`
-      );
-
-      console.log(
-        `Status     : ${status.status}`
-      );
-
-      console.log(
-        `Recipient  : ${status.recipient_id}`
-      );
+      console.log('\n====================================');
+      console.log('📊 WHATSAPP MESSAGE STATUS');
+      console.log('====================================');
+      console.log(`Message ID : ${status.id}`);
+      console.log(`Status     : ${status.status}`);
+      console.log(`Recipient  : ${status.recipient_id}`);
 
       if (status.errors) {
-
-        console.error(
-          '❌ WhatsApp delivery error:'
-        );
-
-        console.error(
-          JSON.stringify(
-            status.errors,
-            null,
-            2
-          )
-        );
-
+        console.error('❌ WhatsApp delivery error:');
+        console.error(JSON.stringify(status.errors, null, 2));
       }
 
-      console.log(
-        '====================================\n'
-      );
+      console.log('====================================\n');
 
       return;
 
     }
 
-    const message =
-      value.messages?.[0];
+    const message = value.messages?.[0];
 
     if (!message) {
-
-      console.log(
-        'ℹ️ Webhook received without a customer message or status.'
-      );
-
+      console.log('ℹ️ Webhook received without a customer message or status.');
       return;
-
     }
 
-    const messageId =
-      message.id;
+    const messageId = message.id;
 
     if (messageId) {
 
-      if (
-        processedMessageIds.has(messageId)
-      ) {
-
-        console.log(
-          `♻️ Duplicate webhook detected for message ID: ${messageId}. Skipping.`
-        );
-
+      if (processedMessageIds.has(messageId)) {
+        console.log(`♻️ Duplicate webhook detected for message ID: ${messageId}. Skipping.`);
         return;
-
       }
 
-      processedMessageIds.add(
-        messageId
-      );
+      processedMessageIds.add(messageId);
 
-      if (
-        processedMessageIds.size > 5000
-      ) {
-
-        const firstVal =
-          processedMessageIds
-            .values()
-            .next()
-            .value;
-
-        processedMessageIds.delete(
-          firstVal
-        );
-
+      if (processedMessageIds.size > 5000) {
+        const firstVal = processedMessageIds.values().next().value;
+        processedMessageIds.delete(firstVal);
       }
 
     }
 
-    if (
-      message.type !== 'text'
-    ) {
-
-      console.log(
-        `ℹ️ Ignoring unsupported message type: ${message.type}`
-      );
-
+    if (message.type !== 'text') {
+      console.log(`ℹ️ Ignoring unsupported message type: ${message.type}`);
       return;
-
     }
 
-    const fromPhone =
-      message.from;
-
-    const senderName =
-      value.contacts?.[0]?.profile?.name ||
-      'Unknown Contact';
-
-    const messageBody =
-      message.text?.body?.trim();
+    const fromPhone = message.from;
+    const senderName = value.contacts?.[0]?.profile?.name || 'Unknown Contact';
+    const messageBody = message.text?.body?.trim();
 
     if (!messageBody) {
-
-      console.log(
-        '⚠️ Received an empty text message.'
-      );
-
+      console.log('⚠️ Received an empty text message.');
       return;
-
     }
 
-    console.log(
-      '\n===================================='
-    );
+    console.log('\n====================================');
+    console.log('📥 INCOMING WHATSAPP MESSAGE');
+    console.log('====================================');
+    console.log(`From Name : ${senderName}`);
+    console.log(`From Phone: ${fromPhone}`);
+    console.log(`Message   : "${messageBody}"`);
+    console.log('====================================\n');
 
-    console.log(
-      '📥 INCOMING WHATSAPP MESSAGE'
-    );
-
-    console.log(
-      '===================================='
-    );
-
-    console.log(
-      `From Name : ${senderName}`
-    );
-
-    console.log(
-      `From Phone: ${fromPhone}`
-    );
-
-    console.log(
-      `Message   : "${messageBody}"`
-    );
-
-    console.log(
-      '====================================\n'
-    );
-
-    const incomingPhoneNumberId =
-      value.metadata?.phone_number_id;
+    const incomingPhoneNumberId = value.metadata?.phone_number_id;
 
     console.log('🔍 DEBUG incomingPhoneNumberId:', JSON.stringify(incomingPhoneNumberId), typeof incomingPhoneNumberId);
 
     if (!incomingPhoneNumberId) {
-
-      console.error(
-        '❌ Webhook payload missing metadata.phone_number_id. Cannot identify business.'
-      );
-
+      console.error('❌ Webhook payload missing metadata.phone_number_id. Cannot identify business.');
       return;
-
     }
 
-    const {
-      data: businesses,
-      error: busError
-    } = await supabase
-
+    // 🔍 NEW DEBUG BLOCK — see everything Render's Supabase connection can see
+    const { data: allBusinesses, error: allBusError } = await supabase
       .from('businesses')
+      .select('id, name, whatsapp_phone_id');
 
+    console.log('🔍 DEBUG all businesses visible to Render:', JSON.stringify(allBusinesses), allBusError?.message);
+
+    const { data: businesses, error: busError } = await supabase
+      .from('businesses')
       .select('*')
-
-      .eq(
-        'whatsapp_phone_id',
-        incomingPhoneNumberId
-      )
-
+      .eq('whatsapp_phone_id', incomingPhoneNumberId)
       .limit(1);
 
-    if (
-      busError ||
-      !businesses ||
-      businesses.length === 0
-    ) {
-
-      console.error(
-        `❌ Failed to fetch business for phone_number_id: ${incomingPhoneNumberId}`,
-        busError?.message
-      );
-
+    if (busError || !businesses || businesses.length === 0) {
+      console.error(`❌ Failed to fetch business for phone_number_id: ${incomingPhoneNumberId}`, busError?.message);
       return;
-
     }
 
-    const business =
-      businesses[0];
+    const business = businesses[0];
+    const businessId = business.id;
 
-    const businessId =
-      business.id;
+    console.log(`🏢 Business: ${business.name}`);
 
-    console.log(
-      `🏢 Business: ${business.name}`
-    );
-
-    let {
-      data: lead,
-      error: leadError
-    } = await supabase
-
+    let { data: lead, error: leadError } = await supabase
       .from('leads')
-
       .select('*')
-
-      .eq(
-        'business_id',
-        businessId
-      )
-
-      .eq(
-        'phone',
-        fromPhone
-      )
-
+      .eq('business_id', businessId)
+      .eq('phone', fromPhone)
       .maybeSingle();
 
     if (leadError) {
-
-      console.error(
-        '❌ Error looking up lead:',
-        leadError.message
-      );
-
+      console.error('❌ Error looking up lead:', leadError.message);
       return;
-
     }
 
     if (!lead) {
 
-      console.log(
-        `👤 Lead not found. Creating new lead for ${fromPhone}...`
-      );
+      console.log(`👤 Lead not found. Creating new lead for ${fromPhone}...`);
 
-      const {
-        data: newLead,
-        error: createError
-      } = await supabase
-
+      const { data: newLead, error: createError } = await supabase
         .from('leads')
-
-        .insert([
-          {
-            business_id: businessId,
-            phone: fromPhone,
-            name: senderName,
-            conversation_state: 'NEW'
-          }
-        ])
-
+        .insert([{
+          business_id: businessId,
+          phone: fromPhone,
+          name: senderName,
+          conversation_state: 'NEW'
+        }])
         .select()
-
         .single();
 
       if (createError) {
-
-        console.error(
-          '❌ Failed to create lead:',
-          createError.message
-        );
-
+        console.error('❌ Failed to create lead:', createError.message);
         return;
-
       }
 
-      lead =
-        newLead;
+      lead = newLead;
 
-      console.log(
-        `👤 Created lead: "${lead.name}" (ID: ${lead.id})`
-      );
+      console.log(`👤 Created lead: "${lead.name}" (ID: ${lead.id})`);
 
     } else {
 
-      console.log(
-        `👤 Lead found: "${lead.name}" (ID: ${lead.id}, State: ${lead.conversation_state})`
-      );
+      console.log(`👤 Lead found: "${lead.name}" (ID: ${lead.id}, State: ${lead.conversation_state})`);
 
-      if (
-        lead.name === 'Unknown Contact' &&
-        senderName !== 'Unknown Contact'
-      ) {
+      if (lead.name === 'Unknown Contact' && senderName !== 'Unknown Contact') {
 
-        const {
-          data: updatedLead
-        } = await supabase
-
+        const { data: updatedLead } = await supabase
           .from('leads')
-
-          .update({
-            name: senderName
-          })
-
-          .eq(
-            'id',
-            lead.id
-          )
-
+          .update({ name: senderName })
+          .eq('id', lead.id)
           .select()
-
           .single();
 
         if (updatedLead) {
-
-          lead =
-            updatedLead;
-
+          lead = updatedLead;
         }
 
       }
 
     }
 
-    const {
-      data: agents,
-      error: agentError
-    } = await supabase
-
+    const { data: agents, error: agentError } = await supabase
       .from('agents')
-
       .select('*')
-
-      .eq(
-        'business_id',
-        businessId
-      )
-
+      .eq('business_id', businessId)
       .limit(1);
 
-    if (
-      agentError ||
-      !agents ||
-      agents.length === 0
-    ) {
+    if (agentError || !agents || agents.length === 0) {
 
-      console.error(
-        '❌ Failed to retrieve agent for business:',
-        agentError?.message
-      );
+      console.error('❌ Failed to retrieve agent for business:', agentError?.message);
 
       await sendWhatsAppMessage(
-
         fromPhone,
-
         `Sorry, booking is currently unavailable as no agents are registered for this business.`
-
       );
 
       return;
 
     }
 
-    const agent =
-      agents[0];
+    const agent = agents[0];
 
-    let state =
-      lead.conversation_state ||
-      'NEW';
+    let state = lead.conversation_state || 'NEW';
+    let pendingDate = null;
 
-    let pendingDate =
-      null;
-
-    if (
-      state.startsWith(
-        'AWAITING_SLOT:'
-      )
-    ) {
-
-      pendingDate =
-        state.substring(
-          'AWAITING_SLOT:'.length
-        );
-
-      state =
-        'AWAITING_SLOT';
-
+    if (state.startsWith('AWAITING_SLOT:')) {
+      pendingDate = state.substring('AWAITING_SLOT:'.length);
+      state = 'AWAITING_SLOT';
     }
 
-    console.log(
-      `📊 Current State: ${state}`
-    );
+    console.log(`📊 Current State: ${state}`);
+    console.log(`📊 Existing Property Type: ${lead.property_type || 'none'}`);
+    console.log(`📊 Existing Budget: ${lead.budget || 'none'}`);
 
-    console.log(
-      `📊 Existing Property Type: ${lead.property_type || 'none'}`
-    );
+    if (state === 'BOOKED') {
 
-    console.log(
-      `📊 Existing Budget: ${lead.budget || 'none'}`
-    );
+      console.log('📊 State is BOOKED. Checking intent (cancel/reschedule/other)...');
 
-    if (
-      state === 'BOOKED'
-    ) {
+      const bookedIntentInfo = await extractLeadInfo(messageBody, state, lead);
 
-      console.log(
-        '📊 State is BOOKED. Checking intent (cancel/reschedule/other)...'
-      );
+      console.log('🤖 BOOKED-state intent check:', JSON.stringify(bookedIntentInfo, null, 2));
 
-      const bookedIntentInfo =
-        await extractLeadInfo(
-          messageBody,
-          state,
-          lead
-        );
+      if (bookedIntentInfo.intent === 'CANCEL') {
 
-      console.log(
-        '🤖 BOOKED-state intent check:',
-        JSON.stringify(bookedIntentInfo, null, 2)
-      );
+        console.log(`🗑️ Cancel intent detected for lead ${lead.id}. Cancelling existing tour...`);
 
-      if (
-        bookedIntentInfo.intent === 'CANCEL'
-      ) {
-
-        console.log(
-          `🗑️ Cancel intent detected for lead ${lead.id}. Cancelling existing tour...`
-        );
-
-        const {
-          error: cancelError
-        } = await supabase
-
+        const { error: cancelError } = await supabase
           .from('site_tours')
-
-          .update({
-            status: 'CANCELLED'
-          })
-
+          .update({ status: 'CANCELLED' })
           .eq('lead_id', lead.id)
-
           .eq('status', 'CONFIRMED');
 
         if (cancelError) {
-
-          console.error(
-            '❌ Failed to cancel site tour:',
-            cancelError.message
-          );
-
-          await sendWhatsAppMessage(
-
-            fromPhone,
-
-            `Sorry, something went wrong while cancelling your visit. Please try again in a moment.`
-
-          );
-
+          console.error('❌ Failed to cancel site tour:', cancelError.message);
+          await sendWhatsAppMessage(fromPhone, `Sorry, something went wrong while cancelling your visit. Please try again in a moment.`);
           return;
-
         }
 
         await supabase
-
           .from('leads')
-
-          .update({
-            conversation_state: 'READY_FOR_BOOKING'
-          })
-
+          .update({ conversation_state: 'READY_FOR_BOOKING' })
           .eq('id', lead.id);
 
         await sendWhatsAppMessage(
-
           fromPhone,
-
           `Your site visit has been cancelled. ❌\n\nWhenever you're ready to schedule a new visit, just let me know!`
-
         );
 
         return;
 
       }
 
-      if (
-        bookedIntentInfo.intent === 'RESCHEDULE'
-      ) {
+      if (bookedIntentInfo.intent === 'RESCHEDULE') {
 
-        console.log(
-          `🔄 Reschedule intent detected for lead ${lead.id}. Cancelling existing tour and restarting date selection...`
-        );
+        console.log(`🔄 Reschedule intent detected for lead ${lead.id}. Cancelling existing tour and restarting date selection...`);
 
-        const {
-          error: rescheduleError
-        } = await supabase
-
+        const { error: rescheduleError } = await supabase
           .from('site_tours')
-
-          .update({
-            status: 'CANCELLED'
-          })
-
+          .update({ status: 'CANCELLED' })
           .eq('lead_id', lead.id)
-
           .eq('status', 'CONFIRMED');
 
         if (rescheduleError) {
-
-          console.error(
-            '❌ Failed to cancel site tour for reschedule:',
-            rescheduleError.message
-          );
-
-          await sendWhatsAppMessage(
-
-            fromPhone,
-
-            `Sorry, something went wrong while rescheduling your visit. Please try again in a moment.`
-
-          );
-
+          console.error('❌ Failed to cancel site tour for reschedule:', rescheduleError.message);
+          await sendWhatsAppMessage(fromPhone, `Sorry, something went wrong while rescheduling your visit. Please try again in a moment.`);
           return;
-
         }
 
         await supabase
-
           .from('leads')
-
-          .update({
-            conversation_state: 'READY_FOR_BOOKING'
-          })
-
+          .update({ conversation_state: 'READY_FOR_BOOKING' })
           .eq('id', lead.id);
 
         await sendWhatsAppMessage(
-
           fromPhone,
-
           `No problem! Let's find a new time for your visit.\n\nWhich day would you prefer?\n\n1️⃣ Today\n2️⃣ Tomorrow`
-
         );
 
         return;
 
       }
 
-      console.log(
-        '📊 No cancel/reschedule intent detected. Sending confirmation reminder.'
-      );
+      console.log('📊 No cancel/reschedule intent detected. Sending confirmation reminder.');
 
       await sendWhatsAppMessage(
-
         fromPhone,
-
         `Your site visit is already confirmed. ✅\n\nIf you'd like to change or cancel your appointment, let me know.`
-
       );
 
       return;
 
     }
 
-    if (
-      state === 'AWAITING_SLOT' &&
-      pendingDate
-    ) {
+    if (state === 'AWAITING_SLOT' && pendingDate) {
 
-      console.log(
-        `🎯 AWAITING_SLOT state for date ${pendingDate}. Processing customer selection...`
-      );
+      console.log(`🎯 AWAITING_SLOT state for date ${pendingDate}. Processing customer selection...`);
 
-      const availableSlots =
-        await getAvailableSlots(
-          businessId,
-          agent.id,
-          pendingDate
-        );
-
-      const allSlots =
-        getSlotsForDate(
-          pendingDate
-        );
-
-      const selectedSlot =
-        matchInputToSlot(
-          messageBody,
-          availableSlots,
-          allSlots
-        );
+      const availableSlots = await getAvailableSlots(businessId, agent.id, pendingDate);
+      const allSlots = getSlotsForDate(pendingDate);
+      const selectedSlot = matchInputToSlot(messageBody, availableSlots, allSlots);
 
       if (selectedSlot) {
 
-        console.log(
-          `📌 Match found! Attempting booking for: ${selectedSlot.slotTimeISO}`
-        );
+        console.log(`📌 Match found! Attempting booking for: ${selectedSlot.slotTimeISO}`);
 
-        const result =
-          await bookSlot({
+        const result = await bookSlot({
+          businessId,
+          agentId: agent.id,
+          leadId: lead.id,
+          slotTimeISO: selectedSlot.slotTimeISO
+        });
 
-            businessId,
+        if (result.success) {
 
-            agentId:
-              agent.id,
-
-            leadId:
-              lead.id,
-
-            slotTimeISO:
-              selectedSlot.slotTimeISO
-
-          });
-
-        if (
-          result.success
-        ) {
-
-          console.log(
-            `✅ Booking confirmed for slot: ${selectedSlot.slotTimeISO}`
-          );
+          console.log(`✅ Booking confirmed for slot: ${selectedSlot.slotTimeISO}`);
 
           await supabase
-
             .from('leads')
+            .update({ conversation_state: 'BOOKED' })
+            .eq('id', lead.id);
 
-            .update({
-              conversation_state:
-                'BOOKED'
-            })
-
-            .eq(
-              'id',
-              lead.id
-            );
-
-          const dateFormatted =
-            formatDateForMessage(
-              pendingDate
-            );
+          const dateFormatted = formatDateForMessage(pendingDate);
 
           await sendWhatsAppMessage(
-
             fromPhone,
-
             `✅ Your site visit is confirmed!\n\n📅 Date: ${dateFormatted}\n🕐 Time: ${selectedSlot.timeLabel}\n\nWe'll see you there. Looking forward to meeting you! 👋`
-
           );
 
           return;
 
-        }
+        } else if (result.reason === 'SLOT_TAKEN') {
 
-        else if (
-          result.reason ===
-          'SLOT_TAKEN'
-        ) {
+          console.log(`⚠️ Slot taken: ${selectedSlot.slotTimeISO}. Regenerating available slots...`);
 
-          console.log(
-            `⚠️ Slot taken: ${selectedSlot.slotTimeISO}. Regenerating available slots...`
-          );
+          const remainingSlots = await getAvailableSlots(businessId, agent.id, pendingDate);
 
-          const remainingSlots =
-            await getAvailableSlots(
-              businessId,
-              agent.id,
-              pendingDate
-            );
-
-          if (
-            remainingSlots.length === 0
-          ) {
+          if (remainingSlots.length === 0) {
 
             await supabase
-
               .from('leads')
-
-              .update({
-                conversation_state:
-                  'READY_FOR_BOOKING'
-              })
-
-              .eq(
-                'id',
-                lead.id
-              );
+              .update({ conversation_state: 'READY_FOR_BOOKING' })
+              .eq('id', lead.id);
 
             await sendWhatsAppMessage(
-
               fromPhone,
-
               `That slot was just taken and unfortunately, there are no more slots available for ${formatDateForMessage(pendingDate)} 😅\n\nPlease let me know which other day you'd like to visit (Today or Tomorrow).`
-
             );
 
           } else {
 
-            let msg =
-              `That slot was just taken by another customer 😅\n\nHere are the remaining available times:\n\n`;
+            let msg = `That slot was just taken by another customer 😅\n\nHere are the remaining available times:\n\n`;
 
-            remainingSlots.forEach(
-              (slot, idx) => {
+            remainingSlots.forEach((slot, idx) => {
+              msg += `${idx + 1}️⃣ ${slot.timeLabel}\n`;
+            });
 
-                msg +=
-                  `${idx + 1}️⃣ ${slot.timeLabel}\n`;
+            msg += `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
 
-              }
-            );
-
-            msg +=
-              `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
-
-            await sendWhatsAppMessage(
-              fromPhone,
-              msg
-            );
+            await sendWhatsAppMessage(fromPhone, msg);
 
           }
 
           return;
 
-        }
+        } else {
 
-        else {
+          console.error('❌ Unknown error during booking:', result.error);
 
-          console.error(
-            '❌ Unknown error during booking:',
-            result.error
-          );
-
-          await sendWhatsAppMessage(
-
-            fromPhone,
-
-            `Sorry, something went wrong while booking your slot. Please try again.`
-
-          );
+          await sendWhatsAppMessage(fromPhone, `Sorry, something went wrong while booking your slot. Please try again.`);
 
           return;
 
         }
 
-      }
+      } else {
 
-      else {
+        console.log(`⚠️ Customer input "${messageBody}" did not match any available slot.`);
 
-        console.log(
-          `⚠️ Customer input "${messageBody}" did not match any available slot.`
-        );
+        let msg = `I couldn't recognize that selection. Please choose from the available times for ${formatDateForMessage(pendingDate)}:\n\n`;
 
-        let msg =
-          `I couldn't recognize that selection. Please choose from the available times for ${formatDateForMessage(pendingDate)}:\n\n`;
+        availableSlots.forEach((slot, idx) => {
+          msg += `${idx + 1}️⃣ ${slot.timeLabel}\n`;
+        });
 
-        availableSlots.forEach(
-          (slot, idx) => {
+        msg += `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
 
-            msg +=
-              `${idx + 1}️⃣ ${slot.timeLabel}\n`;
-
-          }
-        );
-
-        msg +=
-          `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM).`;
-
-        await sendWhatsAppMessage(
-          fromPhone,
-          msg
-        );
+        await sendWhatsAppMessage(fromPhone, msg);
 
         return;
 
@@ -1212,286 +588,123 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    console.log(
-      '🧠 Sending message to OpenAI for extraction...'
-    );
+    console.log('🧠 Sending message to OpenAI for extraction...');
 
-    console.log(
-      '🧠 Existing lead context:',
-      {
-        property_type:
-          lead.property_type,
+    console.log('🧠 Existing lead context:', {
+      property_type: lead.property_type,
+      budget: lead.budget,
+      conversation_state: state
+    });
 
-        budget:
-          lead.budget,
+    const leadInfo = await extractLeadInfo(messageBody, state, lead);
 
-        conversation_state:
-          state
-      }
-    );
-
-    const leadInfo =
-      await extractLeadInfo(
-
-        messageBody,
-
-        state,
-
-        lead
-
-      );
-
-    console.log(
-      '\n===================================='
-    );
-
-    console.log(
-      '🤖 AI LEAD EXTRACTION'
-    );
-
-    console.log(
-      '===================================='
-    );
-
-    console.log(
-      JSON.stringify(
-        leadInfo,
-        null,
-        2
-      )
-    );
-
-    console.log(
-      '====================================\n'
-    );
+    console.log('\n====================================');
+    console.log('🤖 AI LEAD EXTRACTION');
+    console.log('====================================');
+    console.log(JSON.stringify(leadInfo, null, 2));
+    console.log('====================================\n');
 
     const updateData = {};
 
-    if (
-      leadInfo.property_type &&
-      leadInfo.property_type !==
-      lead.property_type
-    ) {
-
-      updateData.property_type =
-        leadInfo.property_type;
-
+    if (leadInfo.property_type && leadInfo.property_type !== lead.property_type) {
+      updateData.property_type = leadInfo.property_type;
     }
 
-    if (
-      leadInfo.budget !== null &&
-      leadInfo.budget !== undefined
-    ) {
+    if (leadInfo.budget !== null && leadInfo.budget !== undefined) {
 
-      const newBudget =
-        String(
-          leadInfo.budget
-        );
+      const newBudget = String(leadInfo.budget);
 
-      if (
-        newBudget !==
-        String(lead.budget || '')
-      ) {
-
-        updateData.budget =
-          newBudget;
-
+      if (newBudget !== String(lead.budget || '')) {
+        updateData.budget = newBudget;
       }
 
     }
 
-    if (
-      Object.keys(updateData).length > 0
-    ) {
+    if (Object.keys(updateData).length > 0) {
 
-      console.log(
-        '💾 Updating lead details in database:',
-        updateData
-      );
+      console.log('💾 Updating lead details in database:', updateData);
 
-      const {
-        data: updatedLead,
-        error: upError
-      } = await supabase
-
+      const { data: updatedLead, error: upError } = await supabase
         .from('leads')
-
         .update(updateData)
-
-        .eq(
-          'id',
-          lead.id
-        )
-
+        .eq('id', lead.id)
         .select()
-
         .single();
 
       if (upError) {
-
-        console.error(
-          '❌ Failed to update lead:',
-          upError.message
-        );
-
+        console.error('❌ Failed to update lead:', upError.message);
       } else if (updatedLead) {
 
-        lead =
-          updatedLead;
+        lead = updatedLead;
 
-        console.log(
-          '✅ Lead updated:',
-          {
-            property_type:
-              lead.property_type,
-
-            budget:
-              lead.budget
-          }
-        );
+        console.log('✅ Lead updated:', {
+          property_type: lead.property_type,
+          budget: lead.budget
+        });
 
       }
 
     }
 
-    let chosenDate =
-      null;
+    let chosenDate = null;
 
-    if (
-      state ===
-      'READY_FOR_BOOKING'
-    ) {
-
-      chosenDate =
-        parseDateChoice(
-          messageBody
-        );
-
+    if (state === 'READY_FOR_BOOKING') {
+      chosenDate = parseDateChoice(messageBody);
     }
 
-    if (
-      !chosenDate &&
-      leadInfo.intent ===
-      'BOOK_TOUR' &&
-      leadInfo.requested_tour_iso
-    ) {
+    if (!chosenDate && leadInfo.intent === 'BOOK_TOUR' && leadInfo.requested_tour_iso) {
 
       try {
 
-        const dateObj =
-          new Date(
-            leadInfo.requested_tour_iso
-          );
+        const dateObj = new Date(leadInfo.requested_tour_iso);
+        const kolkataTime = new Date(dateObj.getTime() + (5.5 * 60 * 60 * 1000));
 
-        const kolkataTime =
-          new Date(
-            dateObj.getTime() +
-            (5.5 * 60 * 60 * 1000)
-          );
+        const yyyy = kolkataTime.getUTCFullYear();
+        const mm = String(kolkataTime.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(kolkataTime.getUTCDate()).padStart(2, '0');
 
-        const yyyy =
-          kolkataTime.getUTCFullYear();
-
-        const mm =
-          String(
-            kolkataTime.getUTCMonth() + 1
-          ).padStart(2, '0');
-
-        const dd =
-          String(
-            kolkataTime.getUTCDate()
-          ).padStart(2, '0');
-
-        chosenDate =
-          `${yyyy}-${mm}-${dd}`;
+        chosenDate = `${yyyy}-${mm}-${dd}`;
 
       } catch (error) {
-
-        console.error(
-          '❌ Error parsing requested_tour_iso:',
-          error
-        );
-
+        console.error('❌ Error parsing requested_tour_iso:', error);
       }
 
     }
 
     if (chosenDate) {
 
-      console.log(
-        `📅 Date chosen: ${chosenDate}. Querying available slots...`
-      );
+      console.log(`📅 Date chosen: ${chosenDate}. Querying available slots...`);
 
-      const availableSlots =
-        await getAvailableSlots(
-          businessId,
-          agent.id,
-          chosenDate
-        );
+      const availableSlots = await getAvailableSlots(businessId, agent.id, chosenDate);
 
-      if (
-        availableSlots.length === 0
-      ) {
+      if (availableSlots.length === 0) {
 
         await sendWhatsAppMessage(
-
           fromPhone,
-
           `Sorry, all appointment slots for ${formatDateForMessage(chosenDate)} are currently booked. 😅\n\nPlease let me know if you would like to choose another date (Today or Tomorrow).`
-
         );
 
         await supabase
-
           .from('leads')
+          .update({ conversation_state: 'READY_FOR_BOOKING' })
+          .eq('id', lead.id);
 
-          .update({
-            conversation_state:
-              'READY_FOR_BOOKING'
-          })
+      } else {
 
-          .eq(
-            'id',
-            lead.id
-          );
+        let msg = `Here are the available site visit times for ${formatDateForMessage(chosenDate)}:\n\n`;
 
-      }
+        availableSlots.forEach((slot, idx) => {
+          msg += `${idx + 1}️⃣ ${slot.timeLabel}\n`;
+        });
 
-      else {
+        msg += `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM) to book.`;
 
-        let msg =
-          `Here are the available site visit times for ${formatDateForMessage(chosenDate)}:\n\n`;
-
-        availableSlots.forEach(
-          (slot, idx) => {
-
-            msg +=
-              `${idx + 1}️⃣ ${slot.timeLabel}\n`;
-
-          }
-        );
-
-        msg +=
-          `\nReply with the number (e.g. 1, 2) or time (e.g. 10:00 AM) to book.`;
-
-        await sendWhatsAppMessage(
-          fromPhone,
-          msg
-        );
+        await sendWhatsAppMessage(fromPhone, msg);
 
         await supabase
-
           .from('leads')
-
-          .update({
-            conversation_state:
-              `AWAITING_SLOT:${chosenDate}`
-          })
-
-          .eq(
-            'id',
-            lead.id
-          );
+          .update({ conversation_state: `AWAITING_SLOT:${chosenDate}` })
+          .eq('id', lead.id);
 
       }
 
@@ -1499,209 +712,96 @@ export async function processWhatsAppWebhook(body) {
 
     }
 
-    if (
-      leadInfo.intent ===
-      'BOOK_TOUR'
-    ) {
+    if (leadInfo.intent === 'BOOK_TOUR') {
 
-      console.log(
-        '📅 Site-visit intent detected. Asking for date selection...'
-      );
+      console.log('📅 Site-visit intent detected. Asking for date selection...');
 
       await sendWhatsAppMessage(
-
         fromPhone,
-
         `Sure! Which day would you prefer for the site visit?\n\n1️⃣ Today\n2️⃣ Tomorrow`
-
       );
 
       await supabase
-
         .from('leads')
-
-        .update({
-          conversation_state:
-            'READY_FOR_BOOKING'
-        })
-
-        .eq(
-          'id',
-          lead.id
-        );
+        .update({ conversation_state: 'READY_FOR_BOOKING' })
+        .eq('id', lead.id);
 
       return;
 
     }
 
-    if (
-      lead.property_type &&
-      lead.budget
-    ) {
+    if (lead.property_type && lead.budget) {
 
-      console.log(
-        `📊 Lead is fully qualified (Property: ${lead.property_type}, Budget: ${lead.budget}).`
-      );
+      console.log(`📊 Lead is fully qualified (Property: ${lead.property_type}, Budget: ${lead.budget}).`);
 
       await sendWhatsAppMessage(
-
         fromPhone,
-
         `Great! I have noted your requirements:\n\n🏠 Property Type: ${lead.property_type}\n💰 Budget: ${formatBudget(lead.budget)}\n\nWould you like to schedule a site visit to view the property?`
-
       );
 
       await supabase
-
         .from('leads')
-
-        .update({
-          conversation_state:
-            'READY_FOR_BOOKING'
-        })
-
-        .eq(
-          'id',
-          lead.id
-        );
+        .update({ conversation_state: 'READY_FOR_BOOKING' })
+        .eq('id', lead.id);
 
       return;
 
     }
 
-    console.log(
-      '📊 Lead is not fully qualified. Asking clarification question.'
-    );
+    console.log('📊 Lead is not fully qualified. Asking clarification question.');
 
     let clarificationMsg;
 
-    if (
-      !lead.property_type &&
-      !lead.budget
-    ) {
+    if (!lead.property_type && !lead.budget) {
 
-      clarificationMsg =
-        `Hi ${senderName}! 👋 Thanks for reaching out.\n\nI'd be happy to help you find the right property. Could you tell me:\n\n1. What type of property you're looking for (e.g., 2BHK, 3BHK, Villa)?\n2. Your approximate budget?`;
+      clarificationMsg = `Hi ${senderName}! 👋 Thanks for reaching out.\n\nI'd be happy to help you find the right property. Could you tell me:\n\n1. What type of property you're looking for (e.g., 2BHK, 3BHK, Villa)?\n2. Your approximate budget?`;
 
-    }
+    } else if (!lead.property_type && lead.budget) {
 
-    else if (
-      !lead.property_type &&
-      lead.budget
-    ) {
+      clarificationMsg = `Thanks! I've noted your budget of ${formatBudget(lead.budget)}. 💰\n\nCould you tell me what type of property you're looking for?\n\nFor example: 2BHK, 3BHK, Villa, or Plot.`;
 
-      clarificationMsg =
-        `Thanks! I've noted your budget of ${formatBudget(lead.budget)}. 💰\n\nCould you tell me what type of property you're looking for?\n\nFor example: 2BHK, 3BHK, Villa, or Plot.`;
+    } else if (lead.property_type && !lead.budget) {
+
+      clarificationMsg = `Thanks! I've noted your preference for a ${lead.property_type}. 🏠\n\nCould you tell me your approximate budget?`;
+
+    } else {
+
+      clarificationMsg = `Thanks for the information! Could you tell me a little more about the property you're looking for?`;
 
     }
 
-    else if (
-      lead.property_type &&
-      !lead.budget
-    ) {
-
-      clarificationMsg =
-        `Thanks! I've noted your preference for a ${lead.property_type}. 🏠\n\nCould you tell me your approximate budget?`;
-
-    }
-
-    else {
-
-      clarificationMsg =
-        `Thanks for the information! Could you tell me a little more about the property you're looking for?`;
-
-    }
-
-    await sendWhatsAppMessage(
-      fromPhone,
-      clarificationMsg
-    );
+    await sendWhatsAppMessage(fromPhone, clarificationMsg);
 
     await supabase
-
       .from('leads')
-
-      .update({
-        conversation_state:
-          'QUALIFYING'
-      })
-
-      .eq(
-        'id',
-        lead.id
-      );
+      .update({ conversation_state: 'QUALIFYING' })
+      .eq('id', lead.id);
 
   } catch (error) {
 
-    console.error(
-      '❌ Error inside processWhatsAppWebhook:',
-      error
-    );
+    console.error('❌ Error inside processWhatsAppWebhook:', error);
 
   }
 
 }
 
-process.on(
-  'uncaughtException',
-  (err) => {
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught Exception:', err);
+});
 
-    console.error(
-      '⚠️ Uncaught Exception:',
-      err
-    );
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Unhandled Rejection:', reason);
+});
 
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`👉 Webhook endpoint: http://localhost:${PORT}/webhook`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} in use. Change PORT or kill process.`);
+  } else {
+    console.error('❌ Server error:', err);
   }
-);
-
-process.on(
-  'unhandledRejection',
-  (reason) => {
-
-    console.error(
-      '⚠️ Unhandled Rejection:',
-      reason
-    );
-
-  }
-);
-
-const server =
-  app.listen(
-    PORT,
-    () => {
-
-      console.log(
-        `🚀 Server listening on port ${PORT}`
-      );
-
-      console.log(
-        `👉 Webhook endpoint: http://localhost:${PORT}/webhook`
-      );
-
-    }
-  );
-
-server.on(
-  'error',
-  (err) => {
-
-    if (
-      err.code === 'EADDRINUSE'
-    ) {
-
-      console.error(
-        `❌ Port ${PORT} in use. Change PORT or kill process.`
-      );
-
-    } else {
-
-      console.error(
-        '❌ Server error:',
-        err
-      );
-
-    }
-
-  }
-);
+});
