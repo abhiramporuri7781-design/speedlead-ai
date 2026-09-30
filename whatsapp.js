@@ -2,92 +2,60 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN;
-const META_PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
-
-const META_GRAPH_VERSION =
-  process.env.META_GRAPH_VERSION || 'v19.0';
+const INTERAKT_API_KEY = process.env.INTERAKT_API_KEY;
 
 /**
- * Sends a text message through the WhatsApp Cloud API.
+ * Sends a text message through Interakt's API.
+ * Docs: https://www.interakt.shop/resource-center/
  */
 export async function sendWhatsAppMessage(toPhone, messageText) {
 
-  if (!META_ACCESS_TOKEN || !META_PHONE_NUMBER_ID) {
+  if (!INTERAKT_API_KEY) {
     console.error(
-      '❌ WhatsApp Configuration Error: META_ACCESS_TOKEN or META_PHONE_NUMBER_ID is missing.'
+      '❌ Interakt Configuration Error: INTERAKT_API_KEY is missing.'
     );
-
     return null;
   }
 
-  const url =
-    `https://graph.facebook.com/${META_GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`;
+  const url = 'https://api.interakt.ai/v1/public/message/';
 
   const payload = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to: toPhone,
-    type: 'text',
-    text: {
-      preview_url: false,
-      body: messageText
+    countryCode: '+91',
+    phoneNumber: toPhone.replace('91', ''), // strip leading 91 if present, Interakt wants just the 10-digit number
+    type: 'Session',
+    data: {
+      message: messageText
     }
   };
 
   try {
 
-    console.log(`📤 Sending WhatsApp message to ${toPhone}...`);
+    console.log(`📤 Sending WhatsApp message via Interakt to ${toPhone}...`);
 
     const response = await fetch(url, {
       method: 'POST',
-
       headers: {
-        Authorization: `Bearer ${META_ACCESS_TOKEN}`,
+        Authorization: `Basic ${INTERAKT_API_KEY}`,
         'Content-Type': 'application/json'
       },
-
       body: JSON.stringify(payload)
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-
-      console.error('❌ Meta WhatsApp API error:');
-
-      console.error(
-        JSON.stringify(data, null, 2)
-      );
-
+      console.error('❌ Interakt API error:');
+      console.error(JSON.stringify(data, null, 2));
       return null;
     }
 
-    console.log(
-      '📨 Full Meta API response:',
-      JSON.stringify(data, null, 2)
-    );
-
-    const messageId =
-      data.messages?.[0]?.id;
-
-    console.log(
-      '✅ WhatsApp message successfully sent!'
-    );
-
-    console.log(
-      `Message ID: ${messageId}`
-    );
+    console.log('📨 Full Interakt API response:', JSON.stringify(data, null, 2));
+    console.log('✅ WhatsApp message successfully sent via Interakt!');
 
     return data;
 
   } catch (error) {
-
-    console.error(
-      '❌ Network error attempting to send WhatsApp message:',
-      error
-    );
-
+    console.error('❌ Network error attempting to send WhatsApp message:', error);
     return null;
   }
 }
