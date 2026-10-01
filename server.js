@@ -261,11 +261,86 @@ Give the best natural answer to the customer.
 
 /*
 ====================================================
+BOOKED-STATE HELPERS
+Used when a customer who already has a confirmed
+visit sends a greeting, thanks, or a question.
+====================================================
+*/
+
+async function getConfirmedTourText(leadId) {
+  const { data, error } = await supabase
+    .from('site_tours')
+    .select('slot_time')
+    .eq('lead_id', leadId)
+    .eq('status', 'CONFIRMED')
+    .order('slot_time', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return new Date(data.slot_time).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+async function generateBookedReply(customerMessage, properties) {
+  const context = (properties || [])
+    .map((p, i) => `
+Property ${i + 1}:
+Title: ${p.title || ''}
+Description: ${p.description || ''}
+Type: ${p.property_type || ''}
+Price: ₹${p.price || ''}
+Location: ${p.location || ''}
+BHK: ${p.bhk || ''}
+Possession: ${p.possession_status || ''}
+`)
+    .join('\n');
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    temperature: 0.2,
+    messages: [
+      {
+        role: 'system',
+        content: `
+You are a friendly WhatsApp assistant for a real-estate business. The customer has already booked a site visit.
+
+- If the message is a greeting or thanks, reply warmly in one short line and offer help with questions about the property or area.
+- If it is a question, answer using ONLY the property information provided. Never invent prices, amenities, locations, distances, or possession dates.
+- If the answer is not in the information provided, say you don't have that detail and that the team can confirm it during the site visit.
+- Keep it short and natural for WhatsApp. Do not mention the visit date or time (it is added separately). Do not mention databases or internal systems.
+`
+      },
+      {
+        role: 'user',
+        content: `Customer message:\n${customerMessage}\n\nProperty information:\n${context || 'None available.'}`
+      }
+    ]
+  });
+
+  return completion.choices?.[0]?.message?.content?.trim();
+}
+
+/*
+====================================================
 MAIN WHATSAPP WEBHOOK PROCESSOR — INTERAKT FORMAT
 ====================================================
 */
 
 export async function processWhatsAppWebhook(body) {
+
+  // Set as soon as we know who messaged, so the outer catch can
+  // still send a fallback reply instead of going silent.
+  let replyPhone = null;
 
   try {
 
@@ -292,6 +367,8 @@ export async function processWhatsAppWebhook(body) {
       console.error('❌ Webhook payload missing customer phone number.');
       return;
     }
+
+    replyPhone = fromPhone;
 
     if (messageContentType !== 'Text' || !messageBody) {
       console.log(`ℹ️ Ignoring non-text or empty message (type: ${messageContentType}).`);
@@ -539,12 +616,30 @@ export async function processWhatsAppWebhook(body) {
         return;
       }
 
-      console.log('📊 No cancel/reschedule intent detected. Sending confirmation reminder.');
+      // Not cancel / reschedule: answer the question or greet naturally,
+      // then remind them of their confirmed visit.
+      console.log('📊 No cancel/reschedule intent. Generating helpful reply for booked lead.');
 
-      await sendWhatsAppMessage(
-        fromPhone,
-        `Your site visit is already confirmed. ✅\n\nIf you'd like to change or cancel your appointment, let me know.`
-      );
+      let reply;
+
+      try {
+        const relevantProperties = await searchKnowledge(messageBody);
+        reply = await generateBookedReply(messageBody, relevantProperties);
+      } catch (err) {
+        console.error('❌ BOOKED reply error:', err.message);
+      }
+
+      if (!reply) {
+        reply = `Thanks for your message! Our team will get back to you shortly.`;
+      }
+
+      const tourText = await getConfirmedTourText(lead.id);
+
+      const footer = tourText
+        ? `\n\n✅ Your site visit is still confirmed for ${tourText}. Reply CANCEL or RESCHEDULE to change it.`
+        : '';
+
+      await sendWhatsAppMessage(fromPhone, reply + footer);
 
       return;
     }
@@ -872,6 +967,14 @@ export async function processWhatsAppWebhook(body) {
 
   } catch (error) {
     console.error('❌ Error inside processWhatsAppWebhook:', error);
+
+    // Never leave the customer in silence if something unexpected breaks.
+    if (replyPhone) {
+      await sendWhatsAppMessage(
+        replyPhone,
+        `Sorry, I'm having trouble right now. Our team will get back to you shortly.`
+      ).catch(() => { });
+    }
   }
 }
 

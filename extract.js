@@ -38,7 +38,7 @@ const leadExtractionSchema = {
       requested_tour_iso: {
         type: ['string', 'null'],
         description:
-          'ISO 8601 datetime if a specific visit date/time was mentioned.'
+          'ISO 8601 datetime WITH the +05:30 offset if a specific visit date/time was mentioned.'
       },
 
       needs_clarification: {
@@ -61,6 +61,27 @@ const leadExtractionSchema = {
 };
 
 /**
+ * Current date/time in India (IST), so words like "today" and
+ * "tomorrow" resolve correctly even though the server runs in UTC.
+ */
+function getIndiaDateTimeString() {
+  const now = new Date();
+
+  const formatted = now.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+
+  return `${formatted} (IST, UTC+05:30)`;
+}
+
+/**
  * Extract lead information using both:
  *
  * 1. The customer's NEW message
@@ -74,7 +95,7 @@ export async function extractLeadInfo(
   existingLead = {}
 ) {
 
-  const currentDateTime = new Date().toISOString();
+  const currentDateTime = getIndiaDateTimeString();
 
   const existingPropertyType =
     existingLead?.property_type || null;
@@ -121,6 +142,14 @@ Previously collected lead information:
 - Property type: ${existingPropertyType ?? 'unknown'}
 - Budget: ${existingBudget ?? 'unknown'}
 
+INTENT DEFINITIONS (pick exactly one):
+
+- BOOK_TOUR: the customer wants to schedule or see a site visit, or replies with a day/time for a visit.
+- ASK_INFO: the customer asks a QUESTION about a property, price, location, area, neighbourhood, amenities, possession, availability, nearby facilities, or anything else about what the business sells.
+- RESCHEDULE: the customer already has a visit and wants to change its date or time.
+- CANCEL: the customer already has a visit and wants to cancel it or says they cannot come. Only use CANCEL or RESCHEDULE when the conversation state is BOOKED.
+- OTHER: greetings, thanks, acknowledgements ("ok", "got it"), answers that only give property type or budget, and anything that does not fit the intents above.
+
 Rules:
 
 1. Extract new information explicitly stated in the customer's current message.
@@ -148,15 +177,15 @@ Examples:
 
 8. If the customer expresses interest in a site visit, classify the intent as BOOK_TOUR.
 
-9. If a specific visit date/time is mentioned, return it as ISO 8601.
+9. If a specific visit date/time is mentioned, return it as ISO 8601 including the +05:30 offset (for example 2026-10-03T14:00:00+05:30). Resolve words like "today" and "tomorrow" using the current India date/time above.
 
 10. needs_clarification should be TRUE only when the combined information is insufficient to understand the customer's requirement.
 
 11. If both property_type and budget are known after combining previous information with the current message, needs_clarification MUST be false.
 
-12. A bare budget-only message (e.g. "1cr", "80L") with NO property type known (neither in the current message nor in the previously collected lead information) still counts as partial progress, NOT as "OTHER" intent. In that case:
-    - intent should reflect ASK_INFO (the customer is providing qualification info, not going off-topic)
-    - needs_clarification should be true ONLY because property_type is still missing, not because the message is unclear.
+12. A message that only provides a budget or only provides a property type (e.g. "1cr", "80L", "3bhk") is qualification progress, not a question. Classify its intent as OTHER (it is NOT ASK_INFO, because the customer is not asking anything). Set needs_clarification to true only because the other field is still missing, not because the message is unclear.
+
+13. Greetings and thanks (e.g. "hi", "hello", "thanks") are OTHER.
 `;
 
   try {
