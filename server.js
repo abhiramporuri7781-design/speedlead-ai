@@ -28,9 +28,6 @@ app.get('/', (req, res) => {
 /*
 ====================================================
 INTERAKT WEBHOOK ENDPOINT
-Interakt does not use Meta's hub.challenge GET
-verification — it verifies via a webhook secret
-on the POST payload instead (checked below).
 ====================================================
 */
 
@@ -272,24 +269,7 @@ export async function processWhatsAppWebhook(body) {
 
   try {
 
-    /*
-    ==================================================
-    RAW PAYLOAD DEBUG
-    Keep this until we've confirmed the real shape
-    of Interakt's payload against the docs — remove
-    once confirmed stable.
-    ==================================================
-    */
-
     console.log('🔍 RAW INTERAKT PAYLOAD:', JSON.stringify(body, null, 2));
-
-    /*
-    ==================================================
-    ONLY HANDLE INCOMING CUSTOMER MESSAGES
-    Interakt sends other event types (e.g. message
-    status updates) — we only act on message_received.
-    ==================================================
-    */
 
     if (body.type !== 'message_received') {
       console.log(`ℹ️ Ignoring webhook event type: ${body.type}`);
@@ -300,6 +280,13 @@ export async function processWhatsAppWebhook(body) {
     const senderName = body.data?.customer?.traits?.name || 'Unknown Contact';
     const messageContentType = body.data?.message?.message_content_type;
     const messageBody = body.data?.message?.message?.trim();
+
+    // Ignore echo of our own outgoing messages (chat_message_type will be
+    // "AgentMessage" or similar for our own replies, "CustomerMessage" for theirs)
+    if (body.data?.message?.chat_message_type !== 'CustomerMessage') {
+      console.log(`ℹ️ Ignoring non-customer message (type: ${body.data?.message?.chat_message_type}).`);
+      return;
+    }
 
     if (!fromPhone) {
       console.error('❌ Webhook payload missing customer phone number.');
@@ -322,47 +309,37 @@ export async function processWhatsAppWebhook(body) {
     /*
     ==================================================
     DUPLICATE MESSAGE PROTECTION
-    Interakt's payload doesn't confirm a stable
-    message ID field in the docs we have — using a
-    composite key (phone + message text + rough time
-    bucket) as a pragmatic fallback. Refine once we
-    confirm if body.data?.message?.id or similar exists.
+    Interakt's message object has a real "id" field —
+    use it directly.
     ==================================================
     */
 
-    const messageId =
-      body.data?.message?.id ||
-      `${fromPhone}:${messageBody}:${Math.floor(Date.now() / 5000)}`;
+    const messageId = body.data?.message?.id;
 
-    if (processedMessageIds.has(messageId)) {
-      console.log(`♻️ Duplicate webhook detected for message ID: ${messageId}. Skipping.`);
-      return;
-    }
+    if (messageId) {
+      if (processedMessageIds.has(messageId)) {
+        console.log(`♻️ Duplicate webhook detected for message ID: ${messageId}. Skipping.`);
+        return;
+      }
 
-    processedMessageIds.add(messageId);
+      processedMessageIds.add(messageId);
 
-    if (processedMessageIds.size > 5000) {
-      const firstVal = processedMessageIds.values().next().value;
-      processedMessageIds.delete(firstVal);
+      if (processedMessageIds.size > 5000) {
+        const firstVal = processedMessageIds.values().next().value;
+        processedMessageIds.delete(firstVal);
+      }
     }
 
     /*
     ==================================================
     IDENTIFY BUSINESS
-    Interakt is tied to one WhatsApp number per
-    account in your current setup, so for now we
-    match against the single connected number. Once
-    Interakt's payload confirms a field identifying
-    the *receiving* number (for multi-client support),
-    swap this to match it the same way Meta's
-    phone_number_id worked.
+    Confirmed real field from Interakt's payload:
+    body.data.whatsapp_api_number — the number that
+    received this message.
     ==================================================
     */
 
-    const incomingPhoneNumberId =
-      body.data?.organisationId ||
-      process.env.INTERAKT_WHATSAPP_NUMBER_ID ||
-      null;
+    const incomingPhoneNumberId = body.data?.whatsapp_api_number;
 
     console.log(
       '🔍 DEBUG incomingPhoneNumberId (Interakt):',
@@ -370,7 +347,7 @@ export async function processWhatsAppWebhook(body) {
     );
 
     if (!incomingPhoneNumberId) {
-      console.error('❌ Could not determine which business this message belongs to. Set INTERAKT_WHATSAPP_NUMBER_ID in your .env as a fallback.');
+      console.error('❌ Webhook payload missing whatsapp_api_number. Cannot identify business.');
       return;
     }
 

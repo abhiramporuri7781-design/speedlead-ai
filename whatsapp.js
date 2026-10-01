@@ -6,7 +6,6 @@ const INTERAKT_API_KEY = process.env.INTERAKT_API_KEY;
 
 /**
  * Sends a text message through Interakt's API.
- * Docs: https://www.interakt.shop/resource-center/
  */
 export async function sendWhatsAppMessage(toPhone, messageText) {
 
@@ -21,8 +20,8 @@ export async function sendWhatsAppMessage(toPhone, messageText) {
 
   const payload = {
     countryCode: '+91',
-    phoneNumber: toPhone.replace('91', ''), // strip leading 91 if present, Interakt wants just the 10-digit number
-    type: 'Session',
+    phoneNumber: toPhone.replace(/^91/, ''), // strip leading 91 if present
+    type: 'Text',
     data: {
       message: messageText
     }
