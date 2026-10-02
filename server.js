@@ -184,7 +184,7 @@ RAG RESPONSE GENERATOR
 ====================================================
 */
 
-async function generateRAGResponse(customerQuestion, properties) {
+async function generateRAGResponse(customerQuestion, properties, leadContext = '') {
   if (!properties || properties.length === 0) {
     return `I'm sorry, I couldn't find any relevant information for that right now. Could you please tell me a little more about what you're looking for?`;
   }
@@ -226,6 +226,8 @@ Do not invent:
 
 If the requested information is not present in the context, say that you don't have that information.
 
+The customer's stated requirements are given with their question. If none of the properties match those requirements (for example a different property type, location or budget), say so plainly first, then mention the closest available option and clearly label it as different. Never present a non-matching property as if it fits.
+
 Keep the response natural, concise, and suitable for WhatsApp.
 
 Do not mention embeddings, RAG, vectors, databases, or internal systems.
@@ -237,6 +239,8 @@ Do not mention embeddings, RAG, vectors, databases, or internal systems.
 Customer question:
 
 ${customerQuestion}
+
+Customer requirements: ${leadContext || 'not specified'}
 
 Property information:
 
@@ -328,6 +332,64 @@ You are a friendly WhatsApp assistant for a real-estate business. The customer h
   });
 
   return completion.choices?.[0]?.message?.content?.trim();
+}
+
+/*
+====================================================
+ANSWER PROPERTY QUESTION
+Searches using the customer's message PLUS their known
+requirements (property type, budget), answers honestly,
+then nudges a qualified lead toward booking a visit.
+====================================================
+*/
+
+async function answerPropertyQuestion(fromPhone, messageBody, lead) {
+  const requirements = [];
+
+  if (lead.property_type) {
+    requirements.push(`property type: ${lead.property_type}`);
+  }
+
+  if (lead.budget) {
+    requirements.push(`budget: ${formatBudget(lead.budget)}`);
+  }
+
+  const leadContext = requirements.join(', ');
+
+  const searchQuery = leadContext
+    ? `${messageBody} (${leadContext})`
+    : messageBody;
+
+  const relevantProperties = await searchKnowledge(searchQuery);
+
+  console.log(`📚 RAG retrieved ${relevantProperties.length} properties.`);
+
+  const ragResponse = await generateRAGResponse(
+    messageBody,
+    relevantProperties,
+    leadContext
+  );
+
+  console.log('\n====================================');
+  console.log('🤖 RAG GPT RESPONSE');
+  console.log('====================================');
+  console.log(ragResponse);
+  console.log('====================================\n');
+
+  const isQualified = Boolean(lead.property_type && lead.budget);
+
+  const nudge = isQualified
+    ? `\n\nWould you like to schedule a site visit?\n\n1️⃣ Today\n2️⃣ Tomorrow`
+    : '';
+
+  await sendWhatsAppMessage(fromPhone, ragResponse + nudge);
+
+  if (isQualified) {
+    await supabase
+      .from('leads')
+      .update({ conversation_state: 'READY_FOR_BOOKING' })
+      .eq('id', lead.id);
+  }
 }
 
 /*
@@ -810,19 +872,7 @@ export async function processWhatsAppWebhook(body) {
     if (leadInfo.intent === 'ASK_INFO') {
       console.log('📚 RAG intent detected. Searching business knowledge...');
 
-      const relevantProperties = await searchKnowledge(messageBody);
-
-      console.log(`📚 RAG retrieved ${relevantProperties.length} properties.`);
-
-      const ragResponse = await generateRAGResponse(messageBody, relevantProperties);
-
-      console.log('\n====================================');
-      console.log('🤖 RAG GPT RESPONSE');
-      console.log('====================================');
-      console.log(ragResponse);
-      console.log('====================================\n');
-
-      await sendWhatsAppMessage(fromPhone, ragResponse);
+      await answerPropertyQuestion(fromPhone, messageBody, lead);
 
       return;
     }
@@ -921,6 +971,14 @@ export async function processWhatsAppWebhook(body) {
 
     if (lead.property_type && lead.budget) {
       console.log(`📊 Lead is fully qualified (Property: ${lead.property_type}, Budget: ${lead.budget}).`);
+
+      // The summary was already shown. Don't repeat it: treat whatever
+      // the customer said as a question and answer it.
+      if (state === 'READY_FOR_BOOKING') {
+        console.log('📊 Summary already shown. Treating message as a question.');
+        await answerPropertyQuestion(fromPhone, messageBody, lead);
+        return;
+      }
 
       await sendWhatsAppMessage(
         fromPhone,
