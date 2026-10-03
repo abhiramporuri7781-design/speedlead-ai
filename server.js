@@ -343,7 +343,7 @@ then nudges a qualified lead toward booking a visit.
 ====================================================
 */
 
-async function answerPropertyQuestion(fromPhone, messageBody, lead) {
+async function answerPropertyQuestion(fromPhone, messageBody, lead, businessId) {
   const requirements = [];
 
   if (lead.property_type) {
@@ -360,7 +360,7 @@ async function answerPropertyQuestion(fromPhone, messageBody, lead) {
     ? `${messageBody} (${leadContext})`
     : messageBody;
 
-  const relevantProperties = await searchKnowledge(searchQuery);
+  const relevantProperties = await searchKnowledge(searchQuery, { businessId, propertyType: lead.property_type, budget: lead.budget });
 
   console.log(`📚 RAG retrieved ${relevantProperties.length} properties.`);
 
@@ -685,7 +685,7 @@ export async function processWhatsAppWebhook(body) {
       let reply;
 
       try {
-        const relevantProperties = await searchKnowledge(messageBody);
+        const relevantProperties = await searchKnowledge(messageBody, { businessId, propertyType: lead.property_type, budget: lead.budget });
         reply = await generateBookedReply(messageBody, relevantProperties);
       } catch (err) {
         console.error('❌ BOOKED reply error:', err.message);
@@ -872,7 +872,7 @@ export async function processWhatsAppWebhook(body) {
     if (leadInfo.intent === 'ASK_INFO') {
       console.log('📚 RAG intent detected. Searching business knowledge...');
 
-      await answerPropertyQuestion(fromPhone, messageBody, lead);
+      await answerPropertyQuestion(fromPhone, messageBody, lead, businessId);
 
       return;
     }
@@ -976,7 +976,7 @@ export async function processWhatsAppWebhook(body) {
       // the customer said as a question and answer it.
       if (state === 'READY_FOR_BOOKING') {
         console.log('📊 Summary already shown. Treating message as a question.');
-        await answerPropertyQuestion(fromPhone, messageBody, lead);
+        await answerPropertyQuestion(fromPhone, messageBody, lead, businessId);
         return;
       }
 
