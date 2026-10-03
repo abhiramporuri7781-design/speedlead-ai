@@ -42,6 +42,78 @@ app.post('/webhook', (req, res) => {
   });
 });
 
+/*
+====================================================
+HUMAN HANDOFF ENDPOINT
+Lets an agent (or you) pause or resume the bot for a
+single lead. Requires the business's API key.
+
+POST /handoff
+Header: x-api-key: <businesses.intake_api_key>
+Body:   { "lead_id": "<uuid>", "human": true }
+====================================================
+*/
+
+app.post('/handoff', async (req, res) => {
+  try {
+    const apiKey = req.get('x-api-key');
+    const { lead_id: leadId, human } = req.body || {};
+
+    if (!apiKey) {
+      return res.status(401).json({ error: 'Missing API key' });
+    }
+
+    if (!leadId || typeof human !== 'boolean') {
+      return res
+        .status(400)
+        .json({ error: 'lead_id and human (true or false) are required' });
+    }
+
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('intake_api_key', apiKey)
+      .maybeSingle();
+
+    if (!business) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+
+    // Only touches leads that belong to the business that owns the key.
+    const { data: lead, error } = await supabase
+      .from('leads')
+      .update({ human })
+      .eq('id', leadId)
+      .eq('business_id', business.id)
+      .select('id, human')
+      .maybeSingle();
+
+    if (error) {
+      console.error('❌ /handoff update error:', error.message);
+      return res.status(500).json({ error: 'Could not update lead' });
+    }
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    console.log(`🧑 Handoff updated: lead ${lead.id} human=${lead.human}`);
+
+    return res.json({ ok: true, lead_id: lead.id, human: lead.human });
+
+  } catch (err) {
+    console.error('❌ /handoff error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// True when the customer is asking to talk to a person.
+function wantsHuman(text) {
+  return /\b(talk|speak|connect)\b.{0,25}\b(agent|human|person|someone|representative|executive|owner)\b|\b(real person|live agent|human agent)\b|\bcall me\b/i.test(
+    text
+  );
+}
+
 export const processedMessageIds = new Set();
 
 function formatBudget(budgetVal) {
@@ -564,6 +636,35 @@ export async function processWhatsAppWebhook(body) {
           lead = updatedLead;
         }
       }
+    }
+
+    /*
+    ==================================================
+    HUMAN HANDOFF
+    If a person has taken over this lead, the bot stays
+    silent. If the customer asks for a person, pause the bot.
+    ==================================================
+    */
+
+    if (lead.human) {
+      console.log(`🧑 Lead ${lead.id} is handled by a human. Bot skipped.`);
+      return;
+    }
+
+    if (wantsHuman(messageBody)) {
+      console.log(`🧑 Lead ${lead.id} asked for a human. Pausing the bot.`);
+
+      await supabase
+        .from('leads')
+        .update({ human: true })
+        .eq('id', lead.id);
+
+      await sendWhatsAppMessage(
+        fromPhone,
+        `Sure, I'm passing this to our team. They'll reply to you here shortly.`
+      );
+
+      return;
     }
 
     /*
