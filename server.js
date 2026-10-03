@@ -7,6 +7,7 @@ import { extractLeadInfo } from './extract.js';
 import { supabase } from './db.js';
 import { bookSlot } from './booking.js';
 import { searchKnowledge } from './rag.js';
+import { handleLeadIntake } from './intake.js';
 
 dotenv.config();
 
@@ -106,6 +107,9 @@ app.post('/handoff', async (req, res) => {
     return res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Lead intake from forms, ads and integrations (see intake.js).
+app.post('/lead-intake', handleLeadIntake);
 
 // True when the customer is asking to talk to a person.
 function wantsHuman(text) {
