@@ -9,6 +9,7 @@ import { bookSlot } from './booking.js';
 import { searchKnowledge } from './rag.js';
 import { handleLeadIntake } from './intake.js';
 import { startReminderScheduler, runReminders } from './reminders.js';
+import { sendOwnerAlert } from './alerts.js';
 
 dotenv.config();
 
@@ -699,6 +700,11 @@ export async function processWhatsAppWebhook(body) {
         `Sure, I'm passing this to our team. They'll reply to you here shortly.`
       );
 
+      sendOwnerAlert(
+        businessId,
+        `🧑 Customer asked to talk to a person. The bot is paused for this lead.\nName: ${lead.name}\nPhone: ${fromPhone}\nMessage: ${messageBody.slice(0, 200)}`
+      );
+
       return;
     }
 
@@ -783,6 +789,11 @@ export async function processWhatsAppWebhook(body) {
           `Your site visit has been cancelled. ❌\n\nWhenever you're ready to schedule a new visit, just let me know!`
         );
 
+        sendOwnerAlert(
+          businessId,
+          `❌ Site visit cancelled\nName: ${lead.name}\nPhone: ${fromPhone}`
+        );
+
         return;
       }
 
@@ -809,6 +820,11 @@ export async function processWhatsAppWebhook(body) {
         await sendWhatsAppMessage(
           fromPhone,
           `No problem! Let's find a new time for your visit.\n\nWhich day would you prefer?\n\n1️⃣ Today\n2️⃣ Tomorrow`
+        );
+
+        sendOwnerAlert(
+          businessId,
+          `🔄 Customer is rescheduling their visit\nName: ${lead.name}\nPhone: ${fromPhone}`
         );
 
         return;
@@ -878,6 +894,11 @@ export async function processWhatsAppWebhook(body) {
           await sendWhatsAppMessage(
             fromPhone,
             `✅ Your site visit is confirmed!\n\n📅 Date: ${dateFormatted}\n🕐 Time: ${selectedSlot.timeLabel}\n\nWe'll see you there. Looking forward to meeting you! 👋`
+          );
+
+          sendOwnerAlert(
+            businessId,
+            `✅ New site visit booked\nName: ${lead.name}\nPhone: ${fromPhone}\nWhen: ${dateFormatted} at ${selectedSlot.timeLabel}\nLooking for: ${lead.property_type || 'not given'}, budget ${lead.budget ? formatBudget(lead.budget) : 'not given'}`
           );
 
           return;
