@@ -8,6 +8,7 @@ import { supabase } from './db.js';
 import { bookSlot } from './booking.js';
 import { searchKnowledge } from './rag.js';
 import { handleLeadIntake } from './intake.js';
+import { startReminderScheduler, runReminders } from './reminders.js';
 
 dotenv.config();
 
@@ -110,6 +111,36 @@ app.post('/handoff', async (req, res) => {
 
 // Lead intake from forms, ads and integrations (see intake.js).
 app.post('/lead-intake', handleLeadIntake);
+
+// Manually run the reminder check for ONE business (useful for testing).
+// POST /run-reminders   Header: x-api-key
+app.post('/run-reminders', async (req, res) => {
+  try {
+    const apiKey = req.get('x-api-key');
+
+    if (!apiKey) {
+      return res.status(401).json({ error: 'Missing API key' });
+    }
+
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('intake_api_key', apiKey)
+      .maybeSingle();
+
+    if (!business) {
+      return res.status(401).json({ error: 'Invalid API key' });
+    }
+
+    const summary = await runReminders({ businessId: business.id });
+
+    return res.json({ ok: true, ...summary });
+
+  } catch (err) {
+    console.error('❌ /run-reminders error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // True when the customer is asking to talk to a person.
 function wantsHuman(text) {
@@ -1164,6 +1195,7 @@ START SERVER
 const server = app.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
   console.log(`👉 Webhook endpoint: http://localhost:${PORT}/webhook`);
+  startReminderScheduler();
 });
 
 server.on('error', (err) => {
