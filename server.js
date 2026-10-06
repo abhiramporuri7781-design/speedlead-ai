@@ -35,6 +35,15 @@ INTERAKT WEBHOOK ENDPOINT
 */
 
 app.post('/webhook', (req, res) => {
+  // If WEBHOOK_TOKEN is set, only requests to /webhook?token=... are accepted.
+  // Leave it unset and everything works as before.
+  const expectedToken = process.env.WEBHOOK_TOKEN;
+
+  if (expectedToken && req.query.token !== expectedToken) {
+    console.warn('⚠️ Webhook rejected: missing or wrong token.');
+    return res.status(401).send('Unauthorized');
+  }
+
   res.status(200).send('EVENT_RECEIVED');
 
   processWhatsAppWebhook(req.body).catch((error) => {
@@ -514,7 +523,11 @@ export async function processWhatsAppWebhook(body) {
 
   try {
 
-    console.log('🔍 RAW INTERAKT PAYLOAD:', JSON.stringify(body, null, 2));
+    // Full payloads contain customer messages and phone numbers.
+    // Only print them when DEBUG_PAYLOADS=true is set in the environment.
+    if (process.env.DEBUG_PAYLOADS === 'true') {
+      console.log('🔍 RAW INTERAKT PAYLOAD:', JSON.stringify(body, null, 2));
+    }
 
     if (body.type !== 'message_received') {
       console.log(`ℹ️ Ignoring webhook event type: ${body.type}`);
@@ -540,17 +553,22 @@ export async function processWhatsAppWebhook(body) {
 
     replyPhone = fromPhone;
 
-    if (messageContentType !== 'Text' || !messageBody) {
-      console.log(`ℹ️ Ignoring non-text or empty message (type: ${messageContentType}).`);
-      return;
+    // Voice notes, images, etc. are answered after the human-handoff check below.
+    const isNonText = messageContentType !== 'Text' || !messageBody;
+
+    if (isNonText) {
+      console.log(`ℹ️ Non-text message received (type: ${messageContentType}).`);
     }
 
     console.log('\n====================================');
     console.log('📥 INCOMING WHATSAPP MESSAGE');
     console.log('====================================');
-    console.log(`From Name : ${senderName}`);
-    console.log(`From Phone: ${fromPhone}`);
-    console.log(`Message   : "${messageBody}"`);
+    console.log(`From Phone: ${fromPhone.slice(0, 4)}****${fromPhone.slice(-2)}`);
+
+    if (process.env.DEBUG_PAYLOADS === 'true') {
+      console.log(`From Name : ${senderName}`);
+      console.log(`Message   : "${messageBody}"`);
+    }
     console.log('====================================\n');
 
     /*
@@ -687,7 +705,7 @@ export async function processWhatsAppWebhook(body) {
       return;
     }
 
-    if (wantsHuman(messageBody)) {
+    if (!isNonText && wantsHuman(messageBody)) {
       console.log(`🧑 Lead ${lead.id} asked for a human. Pausing the bot.`);
 
       await supabase
@@ -704,6 +722,19 @@ export async function processWhatsAppWebhook(body) {
         businessId,
         `🧑 Customer asked to talk to a person. The bot is paused for this lead.\nName: ${lead.name}\nPhone: ${fromPhone}\nMessage: ${messageBody.slice(0, 200)}`
       );
+
+      return;
+    }
+
+    if (isNonText) {
+      // Only answer real media messages (voice notes, images, files),
+      // not reactions or stickers.
+      if (/audio|voice|ptt|image|video|document/i.test(String(messageContentType))) {
+        await sendWhatsAppMessage(
+          fromPhone,
+          `Thanks for your message! I can only read text messages right now. Please type your question and I'll help you.`
+        );
+      }
 
       return;
     }
