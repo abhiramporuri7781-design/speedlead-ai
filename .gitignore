@@ -1,3 +1,5 @@
 node_modules/
 .env
 ngrok_log.txt
+.env.dev
+scripts/out/

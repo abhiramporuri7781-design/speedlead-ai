@@ -1,13 +1,24 @@
 import dotenv from 'dotenv';
+import { saveOutgoingFromContext } from './messages.js';
 
 dotenv.config();
 
 const INTERAKT_API_KEY = process.env.INTERAKT_API_KEY;
+// DEV SAFETY: when WHATSAPP_SEND_MODE=log, nothing is sent to WhatsApp.
+// Messages are only printed to the logs (and saved in the messages table).
+// Set this on the dev server. NEVER set it on production.
+const LOG_ONLY = process.env.WHATSAPP_SEND_MODE === 'log';
 
 /**
  * Sends a text message through Interakt's API.
  */
 export async function sendWhatsAppMessage(toPhone, messageText) {
+  if (LOG_ONLY) {
+    console.log(`🧪 [LOG ONLY] Would send to ${toPhone}: ${messageText}`);
+    const fake = { result: true, id: `log-${Date.now()}` };
+    saveOutgoingFromContext(messageText, fake);
+    return fake;
+  }
 
   if (!INTERAKT_API_KEY) {
     console.error(
@@ -50,6 +61,7 @@ export async function sendWhatsAppMessage(toPhone, messageText) {
 
     console.log('📨 Full Interakt API response:', JSON.stringify(data, null, 2));
     console.log('✅ WhatsApp message successfully sent via Interakt!');
+    saveOutgoingFromContext(messageText, data);
 
     return data;
 
@@ -75,6 +87,10 @@ export async function sendTemplateMessage(
   bodyValues = [],
   languageCode = 'en'
 ) {
+  if (LOG_ONLY) {
+    console.log(`🧪 [LOG ONLY] Would send template "${templateName}" to ${toPhone}:`, bodyValues);
+    return { result: true, id: `log-${Date.now()}` };
+  }
 
   if (!INTERAKT_API_KEY) {
     console.error(

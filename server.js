@@ -10,6 +10,7 @@ import { searchKnowledge } from './rag.js';
 import { handleLeadIntake } from './intake.js';
 import { startReminderScheduler, runReminders } from './reminders.js';
 import { sendOwnerAlert } from './alerts.js';
+import { messageContext, saveMessage } from './messages.js';
 
 dotenv.config();
 
@@ -691,6 +692,27 @@ export async function processWhatsAppWebhook(body) {
         }
       }
     }
+
+    /*
+    ==================================================
+    MESSAGE HISTORY
+    From here on, every reply sent in this conversation is
+    saved against this lead, and the customer's message too.
+    ==================================================
+    */
+
+    messageContext.enterWith({ businessId, leadId: lead.id });
+
+    await saveMessage({
+      businessId,
+      leadId: lead.id,
+      direction: 'in',
+      sender: 'customer',
+      contentType: messageContentType,
+      body: isNonText ? `[${messageContentType}]` : messageBody,
+      providerMessageId: messageId || null,
+      status: 'received'
+    });
 
     /*
     ==================================================
