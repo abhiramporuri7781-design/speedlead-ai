@@ -66,7 +66,7 @@ function cleanTemplateValue(value, fallback) {
     return cleaned || fallback;
 }
 
-async function sendFirstMessage(phone, name, propertyInterest) {
+async function sendFirstMessage(phone, name, propertyInterest, business = null) {
     const firstName = cleanTemplateValue(String(name || '').split(' ')[0], 'there');
     const interest = cleanTemplateValue(propertyInterest, 'our properties');
     const bodyValues = [firstName, interest];
@@ -89,13 +89,15 @@ async function sendFirstMessage(phone, name, propertyInterest) {
     const result = await whatsapp.sendTemplateMessage(
         phone,
         WELCOME_TEMPLATE,
-        bodyValues
+        bodyValues,
+        'en',
+        business
     );
 
     if (result) {
-        console.log(`✅ Welcome template accepted by Interakt for ${phone}`);
+        console.log(`✅ Welcome template accepted by ${business?.whatsapp_provider || 'provider'} for ${phone}`);
     } else {
-        console.error(`❌ Welcome template was NOT sent to ${phone}. See the Interakt error above.`);
+        console.error(`❌ Welcome template was NOT sent to ${phone}. See the provider error above.`);
     }
 }
 
@@ -109,7 +111,7 @@ export async function handleLeadIntake(req, res) {
 
         const { data: business } = await supabase
             .from('businesses')
-            .select('id, name')
+            .select('*')
             .eq('intake_api_key', apiKey)
             .maybeSingle();
 
@@ -190,7 +192,7 @@ export async function handleLeadIntake(req, res) {
             return;
         }
 
-        sendFirstMessage(cleanPhone, leadName, property_interest).catch((err) => {
+        sendFirstMessage(cleanPhone, leadName, property_interest, business).catch((err) => {
             console.error('❌ Failed to send first message:', err.message);
         });
 

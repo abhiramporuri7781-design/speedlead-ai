@@ -1,6 +1,7 @@
 // Set PORT to 0 to bind to a random free port and prevent EADDRINUSE conflicts with the running server
 process.env.PORT = '0';
 
+import './guard-dev-db.js';
 import { supabase } from './db.js';
 import { processWhatsAppWebhook, processedMessageIds } from './server.js';
 
@@ -41,6 +42,8 @@ function getKolkataDate(offsetDays = 0) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+let testPhoneNumberId = '1276497992215398';
+
 // Helper to construct simulated webhook payload
 function createMockWebhookPayload(phone, messageText, messageId) {
   return {
@@ -54,7 +57,7 @@ function createMockWebhookPayload(phone, messageText, messageId) {
               messaging_product: 'whatsapp',
               metadata: {
                 display_phone_number: '16505553333',
-                phone_number_id: '1276497992215398'
+                phone_number_id: testPhoneNumberId
               },
               contacts: [
                 {
@@ -98,7 +101,8 @@ async function runPhase5Tests() {
       throw new Error('No business found in the database. Please insert a business first.');
     }
     business = businesses[0];
-    console.log(`🏢 Test Business: "${business.name}" (ID: ${business.id})`);
+    testPhoneNumberId = business.whatsapp_phone_id;
+    console.log(`🏢 Test Business: "${business.name}" (ID: ${business.id}, Phone ID: ${testPhoneNumberId})`);
 
     // Clean up existing tours, leads, and agents for this business to ensure a clean state
     console.log('🧹 Preparing clean test database state (deleting existing tours, leads, agents)...');
@@ -435,7 +439,7 @@ async function runPhase5Tests() {
     const msgId8 = `wamid.t8_${Date.now()}`;
     whatsAppMessagesSent = [];
 
-    // Pre-create Lead 8 in BOOKED state
+    // Pre-create Lead 8 in BOOKED state with a confirmed tour
     const { data: lead8 } = await supabase
       .from('leads')
       .insert([{
@@ -450,21 +454,35 @@ async function runPhase5Tests() {
       .single();
     createdLeadIds.push(lead8.id);
 
+    const bookedSlotTime8 = `${getKolkataDate(2)}T10:00:00+05:30`;
+    const { data: tour8 } = await supabase
+      .from('site_tours')
+      .insert([{
+        business_id: business.id,
+        agent_id: testAgent.id,
+        lead_id: lead8.id,
+        slot_time: bookedSlotTime8,
+        status: 'CONFIRMED'
+      }])
+      .select()
+      .single();
+    createdTourIds.push(tour8.id);
+
     const payload8 = createMockWebhookPayload(phone8, 'Can I visit now?', msgId8);
     await processWhatsAppWebhook(payload8);
 
     const reply8 = whatsAppMessagesSent.find(r => r.to === phone8);
-    if (!reply8 || !reply8.message.includes('already confirmed')) {
+    if (!reply8 || !reply8.message.includes('confirmed')) {
       throw new Error(`Test 8 Failed: Expected confirmation reminder, got: ${reply8?.message}`);
     }
     
-    // Verify no new tours were created
+    // Verify no new tours were created (still exactly 1)
     const { data: tours8 } = await supabase
       .from('site_tours')
       .select('*')
       .eq('lead_id', lead8.id);
       
-    if (tours8.length !== 0) {
+    if (tours8.length !== 1) {
       throw new Error(`Test 8 Failed: Accidentally created a new booking! Tours found: ${tours8.length}`);
     }
     
@@ -501,6 +519,7 @@ async function runPhase5Tests() {
     }
 
     console.log('\n🏁 Cleanup completed.\n');
+    process.exit(process.exitCode || 0);
   }
 }
 

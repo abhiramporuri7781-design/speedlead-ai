@@ -1,3 +1,4 @@
+import './guard-dev-db.js';
 import { supabase } from './db.js';
 
 /**

@@ -10,7 +10,9 @@ import { searchKnowledge } from './rag.js';
 import { handleLeadIntake } from './intake.js';
 import { startReminderScheduler, runReminders } from './reminders.js';
 import { sendOwnerAlert } from './alerts.js';
-import { messageContext, saveMessage } from './messages.js';
+import { messageContext, saveMessage, claimInboundMessage } from './messages.js';
+import { normalizeInteraktPayload } from './webhooks/interakt.js';
+import { normalizeMetaPayload, verifyMetaSignature } from './webhooks/meta.js';
 
 dotenv.config();
 
@@ -21,7 +23,12 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-app.use(express.json());
+// Capture rawBody for Meta webhook signature verification
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 app.get('/', (req, res) => {
   res
@@ -36,20 +43,81 @@ INTERAKT WEBHOOK ENDPOINT
 */
 
 app.post('/webhook', (req, res) => {
-  // If WEBHOOK_TOKEN is set, only requests to /webhook?token=... are accepted.
-  // Leave it unset and everything works as before.
+  const isProd = process.env.NODE_ENV === 'production';
   const expectedToken = process.env.WEBHOOK_TOKEN;
 
+  // In production, WEBHOOK_TOKEN is mandatory. In development, it is checked if set.
+  if (isProd && !expectedToken) {
+    console.error('❌ Interakt webhook rejected: WEBHOOK_TOKEN is not configured in production.');
+    return res.status(500).send('Server configuration error');
+  }
+
   if (expectedToken && req.query.token !== expectedToken) {
-    console.warn('⚠️ Webhook rejected: missing or wrong token.');
+    console.warn('⚠️ Interakt webhook rejected: missing or invalid token.');
     return res.status(401).send('Unauthorized');
   }
 
+  // Acknowledge receipt only after token validation
   res.status(200).send('EVENT_RECEIVED');
 
-  processWhatsAppWebhook(req.body).catch((error) => {
+  processIncomingWebhook(req.body, 'interakt').catch((error) => {
     console.error(
-      '❌ Error processing WhatsApp webhook:',
+      '❌ Error processing WhatsApp webhook (Interakt):',
+      error
+    );
+  });
+});
+
+/*
+====================================================
+META CLOUD API WEBHOOK ENDPOINTS
+====================================================
+*/
+
+// GET /meta-webhook: Verification challenge from Meta Developer Dashboard
+app.get('/meta-webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  const expectedToken = process.env.META_VERIFY_TOKEN;
+
+  if (mode === 'subscribe' && token === expectedToken) {
+    console.log('✅ Meta webhook verified successfully.');
+    return res.status(200).send(challenge);
+  }
+
+  console.warn('⚠️ Meta webhook verification failed: token mismatch.');
+  return res.status(403).send('Forbidden');
+});
+
+// POST /meta-webhook: Incoming events from Meta Cloud API
+app.post('/meta-webhook', (req, res) => {
+  const isProd = process.env.NODE_ENV === 'production';
+  const appSecret = process.env.META_APP_SECRET;
+
+  // In production, META_APP_SECRET is mandatory (fail-closed).
+  if (isProd && !appSecret) {
+    console.error('❌ Meta webhook rejected: META_APP_SECRET is not configured in production.');
+    return res.status(500).send('Server configuration error');
+  }
+
+  // If appSecret is configured, enforce strict HMAC-SHA256 signature verification.
+  if (appSecret) {
+    const signature = req.get('x-hub-signature-256');
+    const rawBody = req.rawBody || JSON.stringify(req.body);
+    if (!verifyMetaSignature(rawBody, signature, appSecret)) {
+      console.warn('⚠️ Rejected Meta webhook: invalid signature.');
+      return res.status(401).send('Unauthorized');
+    }
+  }
+
+  // Acknowledge Meta with HTTP 200 ONLY after signature validation succeeds
+  res.status(200).send('EVENT_RECEIVED');
+
+  processIncomingWebhook(req.body, 'meta').catch((error) => {
+    console.error(
+      '❌ Error processing WhatsApp webhook (Meta):',
       error
     );
   });
@@ -511,46 +579,38 @@ async function answerPropertyQuestion(fromPhone, messageBody, lead, businessId) 
 }
 
 /*
+/*
 ====================================================
-MAIN WHATSAPP WEBHOOK PROCESSOR — INTERAKT FORMAT
+MAIN WHATSAPP WEBHOOK PROCESSOR (PROVIDER AGNOSTIC)
 ====================================================
 */
 
-export async function processWhatsAppWebhook(body) {
-
-  // Set as soon as we know who messaged, so the outer catch can
-  // still send a fallback reply instead of going silent.
+export async function processIncomingWebhook(body, providerName = null) {
   let replyPhone = null;
 
   try {
+    const provider = providerName || (body?.object === 'whatsapp_business_account' ? 'meta' : 'interakt');
 
-    // Full payloads contain customer messages and phone numbers.
-    // Only print them when DEBUG_PAYLOADS=true is set in the environment.
     if (process.env.DEBUG_PAYLOADS === 'true') {
-      console.log('🔍 RAW INTERAKT PAYLOAD:', JSON.stringify(body, null, 2));
+      console.log(`🔍 RAW ${provider.toUpperCase()} PAYLOAD:`, JSON.stringify(body, null, 2));
     }
 
-    if (body.type !== 'message_received') {
-      console.log(`ℹ️ Ignoring webhook event type: ${body.type}`);
+    const normalized = provider === 'meta'
+      ? normalizeMetaPayload(body)
+      : normalizeInteraktPayload(body);
+
+    if (!normalized) {
       return;
     }
 
-    const fromPhone = body.data?.customer?.channel_phone_number;
-    const senderName = body.data?.customer?.traits?.name || 'Unknown Contact';
-    const messageContentType = body.data?.message?.message_content_type;
-    const messageBody = body.data?.message?.message?.trim();
-
-    // Ignore echo of our own outgoing messages (chat_message_type will be
-    // "AgentMessage" or similar for our own replies, "CustomerMessage" for theirs)
-    if (body.data?.message?.chat_message_type !== 'CustomerMessage') {
-      console.log(`ℹ️ Ignoring non-customer message (type: ${body.data?.message?.chat_message_type}).`);
-      return;
-    }
-
-    if (!fromPhone) {
-      console.error('❌ Webhook payload missing customer phone number.');
-      return;
-    }
+    const {
+      fromPhone,
+      senderName,
+      messageContentType,
+      messageBody,
+      messageId,
+      phoneNumberId
+    } = normalized;
 
     replyPhone = fromPhone;
 
@@ -562,7 +622,7 @@ export async function processWhatsAppWebhook(body) {
     }
 
     console.log('\n====================================');
-    console.log('📥 INCOMING WHATSAPP MESSAGE');
+    console.log(`📥 INCOMING WHATSAPP MESSAGE (${provider.toUpperCase()})`);
     console.log('====================================');
     console.log(`From Phone: ${fromPhone.slice(0, 4)}****${fromPhone.slice(-2)}`);
 
@@ -574,67 +634,99 @@ export async function processWhatsAppWebhook(body) {
 
     /*
     ==================================================
-    DUPLICATE MESSAGE PROTECTION
-    Interakt's message object has a real "id" field —
-    use it directly.
+    IDENTIFY BUSINESS (PROVIDER & PHONE SCOPED)
+    Matches the incoming business phone identifier with
+    businesses.whatsapp_phone_id and verifies provider.
     ==================================================
     */
-
-    const messageId = body.data?.message?.id;
-
-    if (messageId) {
-      if (processedMessageIds.has(messageId)) {
-        console.log(`♻️ Duplicate webhook detected for message ID: ${messageId}. Skipping.`);
-        return;
-      }
-
-      processedMessageIds.add(messageId);
-
-      if (processedMessageIds.size > 5000) {
-        const firstVal = processedMessageIds.values().next().value;
-        processedMessageIds.delete(firstVal);
-      }
-    }
-
-    /*
-    ==================================================
-    IDENTIFY BUSINESS
-    Confirmed real field from Interakt's payload:
-    body.data.whatsapp_api_number — the number that
-    received this message.
-    ==================================================
-    */
-
-    const incomingPhoneNumberId = body.data?.whatsapp_api_number;
 
     console.log(
-      '🔍 DEBUG incomingPhoneNumberId (Interakt):',
-      JSON.stringify(incomingPhoneNumberId)
+      `🔍 DEBUG incomingPhoneNumberId (${provider}):`,
+      JSON.stringify(phoneNumberId)
     );
 
-    if (!incomingPhoneNumberId) {
-      console.error('❌ Webhook payload missing whatsapp_api_number. Cannot identify business.');
+    if (!phoneNumberId) {
+      console.error('❌ Webhook payload missing phone identifier. Cannot identify business.');
       return;
     }
 
+    // Look up business matching the phone identifier
     const { data: businesses, error: busError } = await supabase
       .from('businesses')
       .select('*')
-      .eq('whatsapp_phone_id', incomingPhoneNumberId)
-      .limit(1);
+      .eq('whatsapp_phone_id', phoneNumberId)
+      .limit(5);
 
     if (busError || !businesses || businesses.length === 0) {
       console.error(
-        `❌ Failed to fetch business for phone_number_id: ${incomingPhoneNumberId}`,
+        `❌ Failed to fetch business for phone_number_id: ${phoneNumberId}`,
         busError?.message
       );
       return;
     }
 
-    const business = businesses[0];
+    // Filter by provider if the business has a configured whatsapp_provider
+    const matchingBusiness = businesses.find(
+      (b) => !b.whatsapp_provider || b.whatsapp_provider === provider
+    ) || businesses[0];
+
+    // Explicit tenant isolation check: reject if business is strictly assigned to a different provider
+    if (matchingBusiness.whatsapp_provider && matchingBusiness.whatsapp_provider !== provider) {
+      console.error(
+        `❌ Tenant isolation error: Business "${matchingBusiness.name}" is configured for ${matchingBusiness.whatsapp_provider}, but received webhook via ${provider}. Aborting.`
+      );
+      return;
+    }
+
+    const business = {
+      ...matchingBusiness,
+      whatsapp_provider: matchingBusiness.whatsapp_provider || provider
+    };
     const businessId = business.id;
 
-    console.log(`🏢 Business: ${business.name}`);
+    console.log(`🏢 Business: ${business.name} (Provider: ${business.whatsapp_provider})`);
+
+    /*
+    ==================================================
+    DURABLE IDEMPOTENCY (DATABASE-BACKED CLAIM)
+    Atomically claims messageId in the messages table.
+    Rejects duplicate deliveries across restarts and workers.
+    Falls back to in-memory set only when table is not yet migrated.
+    ==================================================
+    */
+
+    if (messageId) {
+      const claimResult = await claimInboundMessage({
+        businessId,
+        provider,
+        providerMessageId: messageId,
+        body: isNonText ? `[${messageContentType}]` : messageBody,
+        contentType: messageContentType
+      });
+
+      if (!claimResult.claimed) {
+        if (claimResult.duplicate) {
+          console.log(`♻️ Duplicate webhook detected via DB unique index for message ID: ${messageId}. Skipping.`);
+          return;
+        }
+        // Real database error: fail closed to prevent duplicate processing on retry
+        console.error('❌ Database error during idempotency claim:', claimResult.error?.message);
+        return;
+      }
+
+      // If in dev mode without messages table, use in-memory deduplication fallback
+      if (claimResult.fallback) {
+        if (processedMessageIds.has(messageId)) {
+          console.log(`♻️ Duplicate webhook detected for message ID: ${messageId} (in-memory fallback). Skipping.`);
+          return;
+        }
+        processedMessageIds.add(messageId);
+        if (processedMessageIds.size > 5000) {
+          const firstVal = processedMessageIds.values().next().value;
+          processedMessageIds.delete(firstVal);
+        }
+      }
+    }
 
     /*
     ==================================================
@@ -695,24 +787,44 @@ export async function processWhatsAppWebhook(body) {
 
     /*
     ==================================================
-    MESSAGE HISTORY
+    MESSAGE CONTEXT
     From here on, every reply sent in this conversation is
     saved against this lead, and the customer's message too.
     ==================================================
     */
 
-    messageContext.enterWith({ businessId, leadId: lead.id });
-
-    await saveMessage({
+    messageContext.enterWith({
       businessId,
       leadId: lead.id,
-      direction: 'in',
-      sender: 'customer',
-      contentType: messageContentType,
-      body: isNonText ? `[${messageContentType}]` : messageBody,
-      providerMessageId: messageId || null,
-      status: 'received'
+      business,
+      provider
     });
+
+    // Update claimed message with lead_id if claimed initially without leadId
+    if (messageId) {
+      try {
+        await supabase
+          .from('messages')
+          .update({ lead_id: lead.id })
+          .eq('business_id', businessId)
+          .eq('provider', provider)
+          .eq('provider_message_id', messageId);
+      } catch (updateErr) {
+        // Non-fatal if messages table is not yet migrated in development
+      }
+    } else {
+      await saveMessage({
+        businessId,
+        leadId: lead.id,
+        direction: 'in',
+        sender: 'customer',
+        contentType: messageContentType,
+        body: isNonText ? `[${messageContentType}]` : messageBody,
+        providerMessageId: null,
+        status: 'received',
+        provider
+      });
+    }
 
     /*
     ==================================================
@@ -1244,6 +1356,14 @@ export async function processWhatsAppWebhook(body) {
       ).catch(() => { });
     }
   }
+}
+
+/**
+ * Backward compatibility wrapper for existing tests and callers.
+ * Auto-detects whether the payload is Meta or Interakt format.
+ */
+export async function processWhatsAppWebhook(body) {
+  return processIncomingWebhook(body);
 }
 
 /*

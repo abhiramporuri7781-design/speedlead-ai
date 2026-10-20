@@ -133,6 +133,20 @@ export async function runReminders({ businessId = null } = {}) {
 
         const leadById = new Map((leads || []).map((lead) => [lead.id, lead]));
 
+        const businessIds = [...new Set(tours.map((tour) => tour.business_id).filter(Boolean))];
+
+        const { data: businesses, error: busError } = await supabase
+            .from('businesses')
+            .select('*')
+            .in('id', businessIds);
+
+        if (busError) {
+            console.error('❌ Reminder business lookup error:', busError.message);
+            continue;
+        }
+
+        const businessById = new Map((businesses || []).map((b) => [b.id, b]));
+
         for (const tour of tours) {
             if (summary.sent + summary.wouldSend >= MAX_SENDS_PER_RUN) {
                 break;
@@ -145,6 +159,8 @@ export async function runReminders({ businessId = null } = {}) {
             if (!lead || !lead.phone) {
                 continue;
             }
+
+            const tourBusiness = businessById.get(tour.business_id);
 
             const values = reminder.values(lead, tour);
 
@@ -172,11 +188,13 @@ export async function runReminders({ businessId = null } = {}) {
             const result = await whatsapp.sendTemplateMessage(
                 lead.phone,
                 reminder.template,
-                values
+                values,
+                'en',
+                tourBusiness
             );
 
             if (result) {
-                console.log(`✅ ${reminder.label} reminder accepted by Interakt for ${lead.phone}`);
+                console.log(`✅ ${reminder.label} reminder accepted by ${tourBusiness?.whatsapp_provider || 'provider'} for ${lead.phone}`);
                 summary.sent += 1;
             } else {
                 // Release the claim so the next run can try again.

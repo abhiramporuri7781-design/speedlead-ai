@@ -1,3 +1,4 @@
+import './guard-dev-db.js';
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import { supabase } from './db.js';
