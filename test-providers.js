@@ -238,8 +238,67 @@ async function runAllTests() {
   assert(interceptedBody.template.components[0].parameters.length === 2, 'Meta template parameters match body values count');
   assert(interceptedBody.template.components[0].parameters[0].text === 'Alice', 'Meta template parameter text is correct');
 
-  // Restore global fetch
-  global.fetch = originalFetch;
+  // S6: LOG-ONLY MODE ZERO EXTERNAL REQUESTS GUARANTEE
+  // When WHATSAPP_SEND_MODE=log, neither Meta nor Interakt endpoint may be called.
+  const originalSendMode = process.env.WHATSAPP_SEND_MODE;
+  try {
+    process.env.WHATSAPP_SEND_MODE = 'log';
+    let logModeFetchCalls = 0;
+    global.fetch = async () => {
+      logModeFetchCalls++;
+      throw new Error('fetch should not be called in log-only mode!');
+    };
+
+    // S6.1: Interakt text send in log-only mode: zero external requests
+    const interaktLogResult = await sendWhatsAppMessage('919876543210', 'Interakt log test', interaktBus);
+    assert(interaktLogResult && interaktLogResult.result === true, 'Interakt text send returns simulated success in log-only mode');
+    assert(logModeFetchCalls === 0, 'Interakt text send in log-only mode makes ZERO external HTTP requests');
+
+    // S6.2: Interakt template send in log-only mode: zero external requests
+    const interaktTplLogResult = await sendTemplateMessage('919876543210', 'lead_welcome_v1', ['Alice'], 'en', interaktBus);
+    assert(interaktTplLogResult && interaktTplLogResult.result === true, 'Interakt template send returns simulated success in log-only mode');
+    assert(logModeFetchCalls === 0, 'Interakt template send in log-only mode makes ZERO external HTTP requests');
+
+    // S6.3: Meta text send in log-only mode: zero external requests
+    const metaLogResult = await sendWhatsAppMessage('919876543210', 'Meta log test', metaBus);
+    assert(metaLogResult && metaLogResult.result === true, 'Meta text send returns simulated success in log-only mode');
+    assert(logModeFetchCalls === 0, 'Meta text send in log-only mode makes ZERO external HTTP requests');
+
+    // S6.4: Meta template send in log-only mode: zero external requests
+    const metaTplLogResult = await sendTemplateMessage('919876543210', 'lead_welcome_v1', ['Alice'], 'en', metaBus);
+    assert(metaTplLogResult && metaTplLogResult.result === true, 'Meta template send returns simulated success in log-only mode');
+    assert(logModeFetchCalls === 0, 'Meta template send in log-only mode makes ZERO external HTTP requests');
+  } finally {
+    // Restore send mode and fetch
+    if (originalSendMode === undefined) {
+      delete process.env.WHATSAPP_SEND_MODE;
+    } else {
+      process.env.WHATSAPP_SEND_MODE = originalSendMode;
+    }
+    global.fetch = originalFetch;
+  }
+
+  // S7: Tenant Isolation - Tenant A cannot use Tenant B's credentials
+  const tenantA = { id: 'tenant-a', name: 'Tenant A', whatsapp_provider: 'interakt', whatsapp_phone_id: '911111111111', interakt_api_key: 'key_tenant_a' };
+  const tenantB = { id: 'tenant-b', name: 'Tenant B', whatsapp_provider: 'interakt', whatsapp_phone_id: '912222222222', interakt_api_key: 'key_tenant_b' };
+  let capturedAuthHeader = null;
+  try {
+    global.fetch = async (url, options) => {
+      capturedAuthHeader = options.headers?.Authorization;
+      return { ok: true, json: async () => ({ result: true, id: 'test_id' }) };
+    };
+
+    const pA = getProvider(tenantA);
+    await pA.sendMessage('919876543210', 'Msg A');
+    assert(capturedAuthHeader === 'Basic key_tenant_a', 'Tenant A uses Tenant A key');
+
+    const pB = getProvider(tenantB);
+    await pB.sendMessage('919876543210', 'Msg B');
+    assert(capturedAuthHeader === 'Basic key_tenant_b', 'Tenant B uses Tenant B key (no leakage of Tenant A)');
+  } finally {
+    // Restore fetch
+    global.fetch = originalFetch;
+  }
 
   // ========================================================
   // GROUP 4: Deduplication

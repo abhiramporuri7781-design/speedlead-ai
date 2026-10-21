@@ -7,7 +7,9 @@ dotenv.config();
 // DEV SAFETY: when WHATSAPP_SEND_MODE=log, nothing is sent to WhatsApp.
 // Messages are only printed to the logs (and saved in the messages table).
 // Set this on the dev server. NEVER set it on production.
-const LOG_ONLY = process.env.WHATSAPP_SEND_MODE === 'log';
+function isLogOnly() {
+  return process.env.WHATSAPP_SEND_MODE === 'log';
+}
 
 /**
  * Sends a text message through the provider configured for the business.
@@ -20,19 +22,19 @@ const LOG_ONLY = process.env.WHATSAPP_SEND_MODE === 'log';
 export async function sendWhatsAppMessage(toPhone, messageText, business = null) {
   const effectiveBusiness = business || messageContext.getStore()?.business;
 
-  if (LOG_ONLY) {
-    console.log(`🧪 [LOG ONLY] Would send to ${toPhone}: ${messageText}`);
-    const fake = { result: true, id: `log-${Date.now()}` };
-    saveOutgoingFromContext(messageText, fake);
-    return fake;
-  }
-
   if (!effectiveBusiness) {
     console.error(
       '❌ Cannot send WhatsApp message: no business context provided. ' +
       'A business object is required to select the provider and phone number.'
     );
     return null;
+  }
+
+  if (isLogOnly()) {
+    console.log(`🧪 [LOG ONLY] Would send to ${toPhone}: ${messageText}`);
+    const fake = { result: true, id: `log-${Date.now()}` };
+    saveOutgoingFromContext(messageText, fake);
+    return fake;
   }
 
   try {
@@ -71,17 +73,17 @@ export async function sendTemplateMessage(
 ) {
   const effectiveBusiness = business || messageContext.getStore()?.business;
 
-  if (LOG_ONLY) {
-    console.log(`🧪 [LOG ONLY] Would send template "${templateName}" to ${toPhone}:`, bodyValues);
-    return { result: true, id: `log-${Date.now()}` };
-  }
-
   if (!effectiveBusiness) {
     console.error(
       '❌ Cannot send template message: no business context provided. ' +
       'A business object is required to select the provider and phone number.'
     );
     return null;
+  }
+
+  if (isLogOnly()) {
+    console.log(`🧪 [LOG ONLY] Would send template "${templateName}" to ${toPhone}:`, bodyValues);
+    return { result: true, id: `log-${Date.now()}` };
   }
 
   try {
